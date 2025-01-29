@@ -1,6 +1,6 @@
 #include <QCoreApplication>
 //#include "websocket_old.h"
-#include "tests.h"
+#include "test_cases.h"
 int main(int argc, char *argv[])
 {
     //QCoreApplication a(argc, argv);
@@ -149,8 +149,20 @@ int main(int argc, char *argv[])
 
 
     //client->disconnect();
+    /*===========================================================================*/
+    //TestCase1();
+    //TestCase2();
+    //TestCase3();
+    //sTestCase4();
+    //TestCase5();
+    TestCase6();
 
-    return RUN_ALL_TESTS();
-    //return 0;
+
+
+
+
+    /*===========================================================================*/
+    //return RUN_ALL_TESTS();
+    return 0;
     //return a.exec();
 }

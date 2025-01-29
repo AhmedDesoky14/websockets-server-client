@@ -66,6 +66,7 @@ using session_hndl = std::weak_ptr<session_abstract>;   //session hndl, for hand
 * Purpose: abstract class, including main server's member variables and interface functions
 * Abstract/Concrete:
 * #Instances:
+* Exception Expected:
 * Inherited Classes:
 * Description:
 *
@@ -86,7 +87,7 @@ protected:
     virtual ~server_abstract(void) = default;
     virtual void accept_connection(void) = 0;
 public:
-    virtual bool start(void) = 0;   //start server
+    virtual void start(void) = 0;   //start server
     virtual void stop(void) = 0;    //stop server
     virtual bool is_serving(void) = 0;  //check if server is serving clients or not
     virtual bool is_running(void) = 0;  //check if server is running or not
@@ -102,6 +103,7 @@ public:
 * Inherited Classes:
 * Abstract/Concrete:
 * #Instances:
+* Exception Expected:
 * Purpose:
 * Description:
 *
@@ -110,26 +112,27 @@ public:
 class ws_server_base : public server_abstract
 {
 protected:
-    std::shared_ptr<ssl::context> ssl_ctx; //SSL context shared_ptr passed to sessions by reference
-    net::io_context& io_ctx;    //IO_context reference for asynchronous operations
+    ssl::context* ssl_ctx; //SSL context shared_ptr passed to sessions by reference
+    net::io_context io_ctx;    //IO_context for asynchronous I/O operations
     tcp::acceptor tcp_acceptor; //TCP acceptor for connections accpeting
     boost::asio::thread_pool threads_pool;  //Pool of threads to run server and sessions
     std::mutex session_establishment_mutex; //Mutex to prevent racing when creating new sessions
     std::mutex g_sessions;   //mutex to protect shared access to map of IDs and sessions
+    bool verification_on;   //boolean variable to check whether the instance is not that secured by verification, used by "wss_server"
 protected:
     ws_server_base(void) = delete;  //deleted default non-parameterized constructor
     //websocket server constructor
-    explicit ws_server_base(net::io_context& context, unsigned short server_port, std::size_t sessions_num)
-        : server_abstract(sessions_num,false), io_ctx(context), tcp_acceptor(context,tcp::endpoint(tcp::v4(),server_port)),
-        threads_pool(sessions_num*2), ssl_ctx(nullptr) {}
+    explicit ws_server_base(unsigned short server_port, std::size_t sessions_num, bool vrf)
+        : server_abstract(sessions_num,false), io_ctx(), tcp_acceptor(io_ctx,tcp::endpoint(tcp::v4(),server_port)),
+        threads_pool(sessions_num*2), ssl_ctx(nullptr), verification_on(vrf) {}
     //websocket secure server constructor
-    explicit ws_server_base(net::io_context& context, ssl::context& ssl_context, unsigned short server_port, std::size_t sessions_num)
-        : server_abstract(sessions_num,true), io_ctx(context), ssl_ctx(&ssl_context),
-        tcp_acceptor(context,tcp::endpoint(tcp::v4(),server_port)), threads_pool(sessions_num*2) {}
-    virtual ~ws_server_base(void) = default;
+    explicit ws_server_base(ssl::context& ssl_context, unsigned short server_port, std::size_t sessions_num, bool vrf)
+        : server_abstract(sessions_num,true), io_ctx(), ssl_ctx(&ssl_context),
+        tcp_acceptor(io_ctx,tcp::endpoint(tcp::v4(),server_port)), threads_pool(sessions_num*2), verification_on(vrf) {}
+    virtual ~ws_server_base(void) = default;   //stop all threads in pool
     void accept_connection(void) override;
 public:
-    bool start(void) override;
+    void start(void) override;
     void stop(void) override;
     bool is_serving(void) override;
     bool is_running(void) override;
@@ -139,12 +142,15 @@ public:
     bool check_inbox(int) override;
     bool check_session(int) override;
     void close_session(int) override;
+    static void lock_resources(ws_server_base*);
+    static void unlock_resources(ws_server_base*);
 };
 /************************************************************************************************************************
 * Class Name: ws_server_base
 * Inherited Classes:
 * Abstract/Concrete:
 * #Instances:
+* Exception Expected:
 * Purpose:
 * Description:
 *
@@ -154,12 +160,11 @@ class ws_server : public ws_server_base  //make all inherited members private
 {
 private:
     static ws_server* server_instance;  //static ptr to server to access in different places - "Singleton Design Pattern"
-    static std::mutex access_mutex;  //mutex to access the instance in many threads
-    net::io_context io_ctx;    //IO_context for asynchronous operations
+    static std::mutex access_mutex;  //mutex to access the instance in many threads safely
 protected:
     ws_server(void) = delete;   //deleted default non-parameterized constructor
     explicit ws_server(unsigned short port, std::size_t sessions_num)
-        : ws_server_base(io_ctx,port,sessions_num) {}
+        : ws_server_base(port,sessions_num,false) {}
     ~ws_server(void) = default;
 public:
     ws_server(const ws_server&) = delete; //delete copy constructor
@@ -167,28 +172,33 @@ public:
     /*====================== Class creation functions - "Singleton Design Pattern" ====================================*/
     inline static ws_server* Create(unsigned short port, std::size_t sessions_num)    //create the instance function
     {
-        //std::lock_guard<std::mutex> lock(ws_server::access_mutex);  //lock mutex
         if(server_instance == nullptr)
             server_instance = new ws_server(port,sessions_num);
         return server_instance;
     }
     inline static ws_server* GetInstance(void)    //get the instance
     {
-        //std::lock_guard<std::mutex> lock(ws_server::access_mutex);  //lock mutex
         return server_instance;
     }
-    inline static void Destroy(void)  //destroy the instance function
+    inline static void Destroy(ws_server* inst_ptr)  //destroy the instance function
     {
-        //std::lock_guard<std::mutex> lock(ws_server::access_mutex);  //lock mutex
-        delete server_instance;
+        ws_server_base::lock_resources(inst_ptr);
+        inst_ptr->threads_pool.stop();
+        delete inst_ptr;
+        inst_ptr = nullptr;
+        ws_server_base::unlock_resources(inst_ptr);
     }
     /*================================================================================================================*/
+public:
+    friend void ws_server_base::lock_resources(ws_server_base*); // Grant access to the static function
+    friend void ws_server_base::unlock_resources(ws_server_base*); // Grant access to the static function
 };
 /************************************************************************************************************************
 * Class Name: ws_server_base
 * Inherited Classes:
 * Abstract/Concrete:
 * #Instances:
+* Exception Expected:
 * Purpose:
 * Description:
 *
@@ -197,47 +207,67 @@ public:
 class wss_server : public ws_server_base  //make all inherited members private
 {
 private:
-    static wss_server* server_instance;  //static ptr to server to access in different places - "Singleton Design Pattern"
-    static std::mutex access_mutex;  //mutex to access the instance in many threads
-    net::io_context io_ctx;    //IO_context for asynchronous operations
+    static wss_server* server_instance;  //static ptr to server to access in different places
+    static std::mutex access_mutex;  //mutex to access the instance in many threads safely
+    static wss_server* server_instance2;  //static ptr to server to access in different places, for server with lower security
+    static std::mutex access_mutex2;  //mutex to access the instance in many threads safely, for server with lower security
     ssl::context ssl_ctx{ssl::context::tls};  //SSL context reference
     const std::string key;  //key file path
     const std::string certificate;  //certificate file path
 protected:
     wss_server(void) = delete;  //deleted default non-parameterized constructor
     explicit wss_server(unsigned short port, std::size_t sessions_num,
-                        const std::string key_file, const std::string certificate_file)
-        : ws_server_base(io_ctx,ssl_ctx,port,sessions_num), key(key_file), certificate(certificate_file) {}
+                        const std::string key_file, const std::string certificate_file, const std::string CA_cert_file)
+        : ws_server_base(ssl_ctx,port,sessions_num,true) {Set_SSL_CTX(ssl_ctx,key_file,certificate_file,CA_cert_file);}
+    explicit wss_server(unsigned short port, std::size_t sessions_num,
+                        const std::string key_file)
+        : ws_server_base(ssl_ctx,port,sessions_num,false)
+    {Set_SSL_CTX(ssl_ctx,key_file);}
     ~wss_server(void) = default;
 public:
     wss_server(const wss_server&) = delete; //delete copy constructor
     wss_server& operator=(const wss_server&) = delete;  //delete copy assignment operator
     /*====================== Class creation functions - "Singleton Design Pattern" ====================================*/
-    inline static wss_server* Create(unsigned short port, std::size_t sessions_num,const std::string key, const std::string certificate)//create the instance function
+    inline static wss_server* Create(unsigned short port, std::size_t sessions_num,const std::string key,
+        const std::string certificate,const std::string CA_certificate)//create the instance function
     {
-        //std::lock_guard<std::mutex> lock(wss_server::access_mutex);  //lock mutex
         if(server_instance == nullptr)
-            server_instance = new wss_server(port,sessions_num,key,certificate);
+            server_instance = new wss_server(port,sessions_num,key,certificate,CA_certificate);
         return server_instance;
     }
-    inline static wss_server* GetInstance(void)    //get the instance
+    inline static wss_server* Create(unsigned short port, std::size_t sessions_num,const std::string key)//create the instance function
     {
-        //std::lock_guard<std::mutex> lock(wss_server::access_mutex);  //lock mutex
-        return server_instance;
+        if(server_instance2 == nullptr)
+            server_instance2 = new wss_server(port,sessions_num,key);
+        return server_instance2;
     }
-    inline static void Destroy(void)  //destroy the instance function
+    inline static wss_server* GetInstance(bool verfication_is_on)    //get the instance
     {
-        //std::lock_guard<std::mutex> lock(wss_server::access_mutex);  //lock mutex
-        delete server_instance;
+        if(verfication_is_on)
+            return server_instance;
+        else
+            return server_instance2;
+    }
+    inline static void Destroy(wss_server* inst_ptr)  //destroy the instance function
+    {
+        ws_server_base::lock_resources(inst_ptr);
+        inst_ptr->threads_pool.stop();
+        delete inst_ptr;
+        inst_ptr = nullptr;
+
+        ws_server_base::unlock_resources(inst_ptr);
     }
     /*================================================================================================================*/
-    bool start(void) override;
+public:
+    friend void ws_server_base::lock_resources(ws_server_base*); // Grant access to the static function
+    friend void ws_server_base::unlock_resources(ws_server_base*); // Grant access to the static function
 };
 /************************************************************************************************************************
 * Class Name: ws_server_base
 * Inherited Classes:
 * Abstract/Concrete:
 * #Instances:
+* Exception Expected:
 * Purpose:
 * Description:
 *
@@ -278,6 +308,7 @@ public:
 * Inherited Classes:
 * Abstract/Concrete:
 * #Instances:
+* Exception Expected:
 * Purpose:
 * Description:
 *
@@ -310,6 +341,7 @@ public:
 * Inherited Classes:
 * Abstract/Concrete:
 * #Instances:
+* Exception Expected:
 * Purpose:
 * Description:
 *
@@ -338,6 +370,7 @@ public:
 * Inherited Classes:
 * Abstract/Concrete:
 * #Instances:
+* Exception Expected:
 * Purpose:
 * Description:
 *

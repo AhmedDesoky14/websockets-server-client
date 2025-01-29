@@ -62,6 +62,7 @@ using wss_stream = websocket::stream<beast::ssl_stream<tcp::socket>>; //stream t
 * Purpose: abstract class, including main server's member variables and interface functions
 * Abstract/Concrete:
 * #Instances:
+* Exception Expected:
 * Inherited Classes:
 * Description:
 *
@@ -87,13 +88,14 @@ public:
     virtual std::vector<unsigned char> read_message(void) = 0;
     virtual void send_message(const std::vector<unsigned char>&) = 0;
     virtual bool check_connection(void) = 0;
-    virtual bool check_queue(void) = 0;
+    virtual bool check_inbox(void) = 0;
 };
 /************************************************************************************************************************
 * Class Name: server_abstract
 * Purpose: abstract class, including main server's member variables and interface functions
 * Abstract/Concrete:
 * #Instances:
+* Exception Expected:
 * Inherited Classes:
 * Description:
 *
@@ -102,26 +104,26 @@ public:
 class ws_client_base : public client_abstract
 {
 protected:
-    net::io_context& io_ctx;    //the client io context
+    net::io_context io_ctx;    //the client io context for asynchronous I/O operations
     tcp::resolver resolver;     //ip and port resolver
     boost::asio::thread_pool client_pool;   //threads pool the client, default=2, 1read/1write
     net::strand<net::io_context::executor_type> strand;//strand to io_context to prevent racing between the threads for the async operations
 protected:
-    ws_client_base(void) = delete;  //default non-parameterized constructor
-    explicit ws_client_base(net::io_context& context)
-        : io_ctx(context), resolver(context), client_pool(2), strand(context.get_executor()) {} //2threads, 1read/1write
-    virtual ~ws_client_base(void) = default;
+    explicit ws_client_base(void)
+        : io_ctx(), resolver(io_ctx), client_pool(2), strand(io_ctx.get_executor()) {} //2threads, 1read/1write
+    virtual ~ws_client_base(void) {client_pool.join();}//join threads until all finish their work
 public:
     std::vector<unsigned char> read_message(void) override;
     void send_message(const std::vector<unsigned char>&) override;
     bool check_connection(void) override;
-    bool check_queue(void) override;
+    bool check_inbox(void) override;
 };
 /************************************************************************************************************************
 * Class Name: server_abstract
 * Purpose: abstract class, including main server's member variables and interface functions
 * Abstract/Concrete:
 * #Instances:
+* Exception Expected:
 * Inherited Classes:
 * Description:
 *
@@ -130,14 +132,13 @@ public:
 class ws_client : public ws_client_base, public std::enable_shared_from_this<ws_client>
 {
 protected:
-    net::io_context io_ctx;    //IO_context for asynchronous operations
     ws_stream stream;   //I/O stream
 protected:
     void receive_message(void);
     void write_message(void);
     void disconnect(int);
 public:
-    explicit ws_client(void) : ws_client_base(io_ctx), stream(io_ctx) {}
+    explicit ws_client(void) : ws_client_base(), stream(io_ctx) {}
     ~ws_client(void) = default;
     bool connect(std::string&, unsigned short);
     void disconnect(void);
@@ -147,6 +148,7 @@ public:
 * Purpose: abstract class, including main server's member variables and interface functions
 * Abstract/Concrete:
 * #Instances:
+* Exception Expected:
 * Inherited Classes:
 * Description:
 *
@@ -155,19 +157,26 @@ public:
 class wss_client : public ws_client_base, public std::enable_shared_from_this<wss_client>
 {
 protected:
-    net::io_context io_ctx;    //IO_context for asynchronous operations
-    wss_stream stream;   //I/O stream
+    std::unique_ptr<wss_stream> stream; //I/O stream, unique pointer
     ssl::context ssl_ctx{ssl::context::tls};  //SSL context reference
-    const std::string key;  //key file path
-    const std::string certificate;  //certificate file path
 protected:
     void receive_message(void);
     void write_message(void);
     void disconnect(int);
 public:
     wss_client(void) = delete;   //default non-parameterized constructor
-    explicit wss_client(const std::string key_file,const std::string certificate_file) : ws_client_base(io_ctx),
-        key(key_file), certificate(certificate_file), stream(io_ctx,ssl_ctx) {}
+    explicit wss_client(const std::string key_file,const std::string certificate_file,const std::string CA_cert_file) :
+        ws_client_base()
+        {
+            Set_SSL_CTX(ssl_ctx,key_file,certificate_file,CA_cert_file);
+            stream = std::make_unique<wss_stream>(io_ctx,ssl_ctx);  //late initialization instead of the initialization list
+        }
+    explicit wss_client(const std::string key_file) :
+        ws_client_base()
+    {
+        Set_SSL_CTX(ssl_ctx,key_file);
+        stream = std::make_unique<wss_stream>(io_ctx,ssl_ctx);  //late initialization instead of the initialization list
+    }
     ~wss_client(void) = default;
     bool connect(std::string&, unsigned short);
     void disconnect(void);

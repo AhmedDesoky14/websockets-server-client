@@ -53,10 +53,12 @@ OBJECTS_DIR   = ./
 ####### Files
 
 SOURCES       = ../../main.cpp \
+		../../test_cases.cpp \
 		../../websocket_old.cpp \
 		../../websockets_client.cpp \
 		../../websockets_server.cpp 
 OBJECTS       = main.o \
+		test_cases.o \
 		websocket_old.o \
 		websockets_client.o \
 		websockets_server.o
@@ -215,10 +217,12 @@ DIST          = /opt/Qt/6.5.3/gcc_64/mkspecs/features/spec_pre.prf \
 		/opt/Qt/6.5.3/gcc_64/mkspecs/features/yacc.prf \
 		/opt/Qt/6.5.3/gcc_64/mkspecs/features/lex.prf \
 		../../../../websocket_project.pro ../../ssl_conf.h \
+		../../test_cases.h \
 		../../tests.h \
 		../../websocket_old.h \
 		../../websockets_client.h \
 		../../websockets_server.h ../../main.cpp \
+		../../test_cases.cpp \
 		../../websocket_old.cpp \
 		../../websockets_client.cpp \
 		../../websockets_server.cpp
@@ -561,8 +565,8 @@ distdir: FORCE
 	@test -d $(DISTDIR) || mkdir -p $(DISTDIR)
 	$(COPY_FILE) --parents $(DIST) $(DISTDIR)/
 	$(COPY_FILE) --parents /opt/Qt/6.5.3/gcc_64/mkspecs/features/data/dummy.cpp $(DISTDIR)/
-	$(COPY_FILE) --parents ../../ssl_conf.h ../../tests.h ../../websocket_old.h ../../websockets_client.h ../../websockets_server.h $(DISTDIR)/
-	$(COPY_FILE) --parents ../../main.cpp ../../websocket_old.cpp ../../websockets_client.cpp ../../websockets_server.cpp $(DISTDIR)/
+	$(COPY_FILE) --parents ../../ssl_conf.h ../../test_cases.h ../../tests.h ../../websocket_old.h ../../websockets_client.h ../../websockets_server.h $(DISTDIR)/
+	$(COPY_FILE) --parents ../../main.cpp ../../test_cases.cpp ../../websocket_old.cpp ../../websockets_client.cpp ../../websockets_server.cpp $(DISTDIR)/
 
 
 clean: compiler_clean 
@@ -733,8 +737,17 @@ main.o: ../../main.cpp /opt/Qt/6.5.3/gcc_64/include/QtCore/QCoreApplication \
 		/opt/Qt/6.5.3/gcc_64/include/QtCore/qpointer.h \
 		/opt/Qt/6.5.3/gcc_64/include/QtCore/qpromise.h \
 		/opt/Qt/6.5.3/gcc_64/include/QtCore/qvariant.h \
-		../../websocket_old.h
+		../../test_cases.h \
+		../../websockets_server.h \
+		../../ssl_conf.h \
+		../../websockets_client.h
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o main.o ../../main.cpp
+
+test_cases.o: ../../test_cases.cpp ../../test_cases.h \
+		../../websockets_server.h \
+		../../ssl_conf.h \
+		../../websockets_client.h
+	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o test_cases.o ../../test_cases.cpp
 
 websocket_old.o: ../../websocket_old.cpp ../../websocket_old.h
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o websocket_old.o ../../websocket_old.cpp

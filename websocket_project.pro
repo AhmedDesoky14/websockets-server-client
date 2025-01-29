@@ -8,6 +8,7 @@ CONFIG += c++17 cmdline
 
 SOURCES += \
         main.cpp \
+        test_cases.cpp \
         websocket_old.cpp \
         websockets_client.cpp \
         websockets_server.cpp
@@ -37,6 +38,7 @@ LIBS += -L/usr/local/lib \  #for both Boost and OpenCV
 
 HEADERS += \
     ssl_conf.h \
+    test_cases.h \
     tests.h \
     websocket_old.h \
     websockets_client.h \
