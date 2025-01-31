@@ -134,14 +134,14 @@ class ws_client : public ws_client_base, public std::enable_shared_from_this<ws_
 protected:
     ws_stream stream;   //I/O stream
 protected:
-    void receive_message(void);
-    void write_message(void);
-    void disconnect(int);
+    void receive_message(void) override;
+    void write_message(void) override;
+    void disconnect(int) override;
 public:
     explicit ws_client(void) : ws_client_base(), stream(io_ctx) {}
     ~ws_client(void) = default;
-    bool connect(std::string&, unsigned short);
-    void disconnect(void);
+    bool connect(std::string&, unsigned short) override;
+    void disconnect(void) override;
 };
 /************************************************************************************************************************
 * Class Name: server_abstract
@@ -160,9 +160,9 @@ protected:
     std::unique_ptr<wss_stream> stream; //I/O stream, unique pointer
     ssl::context ssl_ctx{ssl::context::tls};  //SSL context reference
 protected:
-    void receive_message(void);
-    void write_message(void);
-    void disconnect(int);
+    void receive_message(void) override;
+    void write_message(void) override;
+    void disconnect(int) override;
 public:
     wss_client(void) = delete;   //default non-parameterized constructor
     explicit wss_client(const std::string key_file,const std::string certificate_file,const std::string CA_cert_file) :
@@ -178,8 +178,8 @@ public:
         stream = std::make_unique<wss_stream>(io_ctx,ssl_ctx);  //late initialization instead of the initialization list
     }
     ~wss_client(void) = default;
-    bool connect(std::string&, unsigned short);
-    void disconnect(void);
+    bool connect(std::string&, unsigned short) override;
+    void disconnect(void) override;
 };
 
 

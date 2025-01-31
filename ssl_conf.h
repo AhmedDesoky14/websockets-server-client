@@ -19,7 +19,6 @@
 #include <boost/beast/core.hpp>
 #include <boost/beast/ssl.hpp>
 #define DEFAULT_CERTIFICATE "../../credentials/default-cert.pem"
-#define CLIENT_DEFAULT_CERTIFICATE "../../credentials/default2-cert.pem"
 /************************************************************************************************************************
  *                     							   NAMESPACES
  ***********************************************************************************************************************/
@@ -81,10 +80,17 @@ static void Set_SSL_CTX(ssl::context& ssl_ctx,const std::string& key_file) //TLS
         ssl_ctx.set_options(ssl::context::default_workarounds | //set options, Enables workarounds for known bugs in SSL libraries.
                             net::ssl::context::no_sslv2 |   //Disable the deprecated SSLv2 protocol.
                             net::ssl::context::no_sslv3 |   //Disable the deprecated SSLv3 protocol.
+                            //net::ssl::context::no_tlsv1_3   |//disable TLSv1.3 to allow anonymous DH
                             net::ssl::context::single_dh_use); //use a new key for each key exchange (session) in Diffie-Helman (DH).
         ssl_ctx.use_private_key_file(key_file,ssl::context::pem); //set private key
         ssl_ctx.use_certificate_file(DEFAULT_CERTIFICATE,ssl::context::pem);   //set certificate default
+        //SSL_CTX_set_ciphersuites(ssl_ctx.native_handle(), "TLS_AES_256_GCM_SHA384:ADH-AES256-GCM-SHA384");
+        //SSL_CTX_set_ciphersuites(ssl_ctx.native_handle(), "TLS_AES_256_GCM_SHA384");    //set shared cipher
+        //ssl_ctx.set_options(boost::asio::ssl::context::no_tlsv1_3);
         ssl_ctx.set_verify_mode(ssl::verify_none);    //no certificate verification, only DH key exchange
+        //this is to accept the default certificate and bypass certificate validation
+        //ssl_ctx.set_verify_callback([](bool, boost::asio::ssl::verify_context&) { return true; });
+
     }
     catch(...)
     {throw;}   //failed to set SSL configurations, rethrow exception

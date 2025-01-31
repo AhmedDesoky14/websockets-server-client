@@ -76,6 +76,9 @@ class server_abstract
 {
 protected:
     bool secure; //boolean to understand if the server is secured or not
+    bool started_once = false;  //boolean to check if the server already started once or not
+    unsigned short server_port; //opened port for the server
+    static std::mutex sessions_ctrl_mutex;   //mutex to prevent deadlock of calling close sessions inside stop function
     std::size_t max_sessions;   //max allowed sessions num
     std::atomic<std::size_t> session_count; //counter for sessions running
     std::atomic<bool> server_running = false;   //boolean to show if server is running or not
@@ -83,7 +86,7 @@ protected:
     std::unordered_map<int,session_hndl> sessions;  //hash map for all sessions to control
 protected:
     server_abstract(void) = delete; //deleted default non-parameterized constructor
-    explicit server_abstract(std::size_t limit,bool type) : max_sessions(limit), secure(type) {}
+    explicit server_abstract(std::size_t limit,unsigned short port,bool type) : max_sessions(limit), secure(type), server_port(port) {}
     virtual ~server_abstract(void) = default;
     virtual void accept_connection(void) = 0;
 public:
@@ -122,13 +125,13 @@ protected:
 protected:
     ws_server_base(void) = delete;  //deleted default non-parameterized constructor
     //websocket server constructor
-    explicit ws_server_base(unsigned short server_port, std::size_t sessions_num, bool vrf)
-        : server_abstract(sessions_num,false), io_ctx(), tcp_acceptor(io_ctx,tcp::endpoint(tcp::v4(),server_port)),
-        threads_pool(sessions_num*2), ssl_ctx(nullptr), verification_on(vrf) {}
+    explicit ws_server_base(unsigned short port, std::size_t sessions_num, bool vrf)
+        : server_abstract(sessions_num,port,false), io_ctx(), tcp_acceptor(io_ctx,tcp::endpoint(tcp::v4(),port)),
+        threads_pool(sessions_num*2), ssl_ctx(nullptr), verification_on(vrf) {tcp_acceptor.cancel(); tcp_acceptor.close();}
     //websocket secure server constructor
-    explicit ws_server_base(ssl::context& ssl_context, unsigned short server_port, std::size_t sessions_num, bool vrf)
-        : server_abstract(sessions_num,true), io_ctx(), ssl_ctx(&ssl_context),
-        tcp_acceptor(io_ctx,tcp::endpoint(tcp::v4(),server_port)), threads_pool(sessions_num*2), verification_on(vrf) {}
+    explicit ws_server_base(ssl::context& ssl_context, unsigned short port, std::size_t sessions_num, bool vrf)
+        : server_abstract(sessions_num,port,true), io_ctx(), ssl_ctx(&ssl_context),
+        tcp_acceptor(io_ctx,tcp::endpoint(tcp::v4(),port)), threads_pool(sessions_num*2), verification_on(vrf) {tcp_acceptor.cancel(); tcp_acceptor.close();}
     virtual ~ws_server_base(void) = default;   //stop all threads in pool
     void accept_connection(void) override;
 public:
@@ -182,11 +185,16 @@ public:
     }
     inline static void Destroy(ws_server* inst_ptr)  //destroy the instance function
     {
-        ws_server_base::lock_resources(inst_ptr);
+        inst_ptr->io_ctx.stop();
+        inst_ptr->io_ctx.reset();
+        if(inst_ptr->tcp_acceptor.is_open())
+        {
+            inst_ptr->tcp_acceptor.cancel();
+            inst_ptr->tcp_acceptor.close(); //closed if open
+        }
         inst_ptr->threads_pool.stop();
         delete inst_ptr;
         inst_ptr = nullptr;
-        ws_server_base::unlock_resources(inst_ptr);
     }
     /*================================================================================================================*/
 public:
@@ -208,8 +216,8 @@ class wss_server : public ws_server_base  //make all inherited members private
 {
 private:
     static wss_server* server_instance;  //static ptr to server to access in different places
-    static std::mutex access_mutex;  //mutex to access the instance in many threads safely
     static wss_server* server_instance2;  //static ptr to server to access in different places, for server with lower security
+    static std::mutex access_mutex;  //mutex to access the instance in many threads safely
     static std::mutex access_mutex2;  //mutex to access the instance in many threads safely, for server with lower security
     ssl::context ssl_ctx{ssl::context::tls};  //SSL context reference
     const std::string key;  //key file path
@@ -231,12 +239,14 @@ public:
     inline static wss_server* Create(unsigned short port, std::size_t sessions_num,const std::string key,
         const std::string certificate,const std::string CA_certificate)//create the instance function
     {
+        std::lock_guard<std::mutex> lock(access_mutex);
         if(server_instance == nullptr)
             server_instance = new wss_server(port,sessions_num,key,certificate,CA_certificate);
         return server_instance;
     }
     inline static wss_server* Create(unsigned short port, std::size_t sessions_num,const std::string key)//create the instance function
     {
+        std::lock_guard<std::mutex> lock(access_mutex2);
         if(server_instance2 == nullptr)
             server_instance2 = new wss_server(port,sessions_num,key);
         return server_instance2;
@@ -250,12 +260,24 @@ public:
     }
     inline static void Destroy(wss_server* inst_ptr)  //destroy the instance function
     {
-        ws_server_base::lock_resources(inst_ptr);
+        inst_ptr->io_ctx.stop();
+        inst_ptr->io_ctx.reset();
+        if(inst_ptr->tcp_acceptor.is_open())
+        {
+            inst_ptr->tcp_acceptor.cancel();
+            inst_ptr->tcp_acceptor.close(); //closed if open
+        }
         inst_ptr->threads_pool.stop();
-        delete inst_ptr;
-        inst_ptr = nullptr;
-
-        ws_server_base::unlock_resources(inst_ptr);
+        if(inst_ptr->verification_on)
+        {
+            delete server_instance;
+            server_instance = nullptr;
+        }
+        else
+        {
+            delete server_instance2;
+            server_instance2 = nullptr;
+        }
     }
     /*================================================================================================================*/
 public:

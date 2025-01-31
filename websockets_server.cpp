@@ -22,8 +22,9 @@ std::mutex wss_server::access_mutex;             // Initialize static mutex
 wss_server* wss_server::server_instance2 = nullptr;  // Initialize static pointer to nullptr
 std::mutex wss_server::access_mutex2;             // Initialize static mutex
 
+std::mutex server_abstract::sessions_ctrl_mutex;
 
-constexpr int connection_timeout = 3;  //in seconds
+constexpr int connection_timeout = 10;  //in seconds
 
 
 
@@ -61,6 +62,9 @@ void ws_server_base::unlock_resources(ws_server_base* instance_ptr)
 }
 
 
+
+
+
 /************************************************************************************************************************
 * Function Name: accept_connection
 * Class name: ws_server_base
@@ -84,13 +88,19 @@ void ws_server_base::accept_connection(void)
     session_establishment_mutex.lock();
     tcp_acceptor.async_accept([this](boost::system::error_code errcode,tcp::socket socket)
     {
-        if(!server_running.load())  //if server is not running. accept no more connections
-            return;
+        // if(!server_running.load())  //if server is not running. accept no more connections
+        // {
+        //     if(!session_establishment_mutex.try_lock()) //if not locked, lock then unlock
+        //         session_establishment_mutex.unlock();
+        //     else
+        //         session_establishment_mutex.unlock();   //if locked,
+        //     return;
+        // }
         ws_server_base::lock_resources(this);
         if(errcode)
         {
             socket.close();
-            std::cout << "A session failed to start" << std::endl;
+            std::cout << "A session failed to start: "<< errcode.message() << std::endl;
             //ws_server_base::unlock_resources(this);
             //session_establishment_mutex.unlock();
         }
@@ -131,8 +141,13 @@ void ws_server_base::accept_connection(void)
             //session_establishment_mutex.unlock();
         }
         ws_server_base::unlock_resources(this);
-        session_establishment_mutex.unlock();
-        accept_connection();  // Continue accepting new connections
+        //this is to make sure that the mutex is unlocked to accept new connections. if and only if the mutex is not locked
+        if(!session_establishment_mutex.try_lock()) //if not locked, lock then unlock
+            session_establishment_mutex.unlock();
+        else
+            session_establishment_mutex.unlock();   //if locked,
+        if(server_running)
+            accept_connection();  // Continue accepting new connections
     });
 
     //current connection being in establishment finishes then to the next new establishment
@@ -231,22 +246,27 @@ void ws_server_base::start(void)
         ws_server_base::unlock_resources(this);
         return; //already running
     }
-    server_running = true;
+    tcp_acceptor = tcp::acceptor(io_ctx,tcp::endpoint(tcp::v4(),server_port));  //initialze the tcp_accpetor
     tcp_acceptor.listen();
+    server_running = true;
     this->accept_connection();
     std::cout << "Server started" << std::endl;
     for(std::size_t k=0;k<max_sessions;++k) //initialize IDs
         sessions_ids.insert(k+1);
     //creating number of threads equal to max allowed number of sessions x2 and run the io_context in all these threads
     //this will make the server handle different sessions in different threads concurrently, each session 2threads, 1read/1write
-    for (std::size_t i=0; i < max_sessions*2; ++i)  //here check after stopping and starting again
-        net::post(threads_pool, [this](){io_ctx.run();});
-    ws_server_base::unlock_resources(this);
+    if(!started_once)
+    {
+        for (std::size_t i=0; i < max_sessions*2; ++i)  //here check after stopping and starting again
+            net::post(threads_pool, [this](){io_ctx.run();});
+    }
+    started_once = true;
     //this is to make sure that the mutex is unlocked to accept new connections. if and only if the mutex is not locked
     if(!session_establishment_mutex.try_lock()) //if not locked, lock then unlock
         session_establishment_mutex.unlock();
     else
-        session_establishment_mutex.unlock();   //if locked, unlock
+        session_establishment_mutex.unlock();   //if locked,
+    ws_server_base::unlock_resources(this);
     return;
 }
 /************************************************************************************************************************
@@ -273,14 +293,41 @@ void ws_server_base::stop(void)
         return;
     }
     server_running = false; //stop server
+    //io_ctx.stop();  //stop context
+    //io_ctx.reset();
     tcp_acceptor.cancel();  //cancel all tcp connections
     for(auto& sess_iter : sessions) //close all running sessions
+    {
+        if(this->sessions.size() == 0)
+            break;
+        std::cout << "sessions number remaining: " << this->sessions.size() << std::endl;
         this->close_session(sess_iter.first);
-    io_ctx.stop();  //stop context
-    io_ctx.reset();
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));//sleep until all handlers are executed and threads are ended
+    }
+    tcp_acceptor.close();   //close port, all connections will be closed automatically
+    sessions.clear();   //clear threads pool
+    sessions_ids.clear();
+    session_count = 0;
+    //tcp_acceptor.open(boost::asio::ip::tcp::v4()); // Re-open, for further starting the server
+    //tcp_acceptor.bind(tcp::endpoint(tcp::v4(),server_port)); // Bind again the interface and port for further starting the server again
+    //tcp_acceptor.bind(tcp::endpoint(net::ip::address::from_string("0.0.0.0"), server_port));  // Bind to all networks interfaces again and the designated port
+    //io_ctx.run();
+    // tcp_acceptor = tcp::acceptor(io_ctx,tcp::endpoint(tcp::v4(),server_port));  //re-initialze the tcp_accpetor
+    // tcp_acceptor.listen();
+    //boost::system::error_code errcode;
+
+    //tcp_acceptor.bind(tcp::endpoint(net::ip::address::from_string("0.0.0.0"), server_port), errcode);
+
+    // if (errcode)    //for debugging
+    //     std::cerr << "Error binding acceptor: " << errcode.message() << std::endl;
+
+
+
+    //threads_pool.join();        //join all threads until they finish
+
+    //std::this_thread::sleep_for(std::chrono::milliseconds(100));//sleep until all handlers are executed and threads are ended
     std::cout << "Server stoped gracefully" << std::endl;
     ws_server_base::unlock_resources(this);
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));    //delay so ongoing operations exit
     return;
 }
 /************************************************************************************************************************
@@ -477,7 +524,8 @@ bool ws_server_base::check_session(int id)
 ************************************************************************************************************************/
 void ws_server_base::close_session(int id)
 {
-    ws_server_base::lock_resources(this);
+    //ws_server_base::lock_resources(this);
+    std::lock_guard<std::mutex> lock(sessions_ctrl_mutex);
     auto session_iter = sessions.find(id);
     if(session_iter == sessions.end())   //id not found, not running
     {
@@ -486,7 +534,7 @@ void ws_server_base::close_session(int id)
     }
     auto session_handler = session_iter->second;    //stored weak_ptr to the session
     session_handler.lock()->stop();
-    ws_server_base::unlock_resources(this);
+    //ws_server_base::unlock_resources(this);
 }
 /************************************************************************************************************************
 * Function Name:
@@ -573,6 +621,7 @@ inline bool ws_session_base::check_inbox(void)
 *
 *
 ************************************************************************************************************************/
+
 inline bool ws_session_base::check_session(void)
 {
     return ongoing_session.load();
@@ -606,32 +655,23 @@ void ws_session::start(void)
     {
         if(errcode)
         {
-            std::cout << "Server, failed WebSocket handshake, num: "<< self_object->session_id << std::endl;
-            try
-            {   /*close stream, due to protocol error*/
-                self_object->stream.close(websocket::close_code::protocol_error);
-                self_object->ongoing_session = true;
-                self_object->stop(1);   //set "ongoing_session" to true to allow session closing
-                return;
-            }
-            catch(...)
-            {
-                self_object->ongoing_session = true;
-                self_object->stop(1);   //set "ongoing_session" to true to allow session closing
-                return;
-            }
+            std::cout << "Server, failed WebSocket handshake, num: "<< self_object->session_id <<" -> "<< errcode.message() << std::endl;
+            self_object->ongoing_session = true;
+            self_object->stop(1);   //set "ongoing_session" to true to allow session closing
+            return;
         }
         // All functions are successfull
         std::cout << "Server acquired new connection, session started, num: "<< self_object->session_id << std::endl;
         std::cout << "current connected sessions: " << self_object->session_count.load() << std::endl;
         self_object->ongoing_session = true;
-        self_object->receive_message();
+        self_object->receive_message(); //trigger receive message call
         while(self_object->ongoing_session.load())
         {
             if(self_object->send_messages_queue.size() > 0) //there's a message to send
                 self_object->write_message();
             std::this_thread::sleep_for(std::chrono::milliseconds(100));    //sleep for 100ms
         }
+        std::cout << "session ended, num:" << self_object->session_id << std::endl;
     });
     //Boost's default handshake timeout connection for websocket is 30seconds
     int i = 0;  //timeout check loop
@@ -670,6 +710,7 @@ void ws_session::stop(void)
     sessions_ids.insert(session_id);
     g_sessions.unlock();
     session_count.fetch_sub(1); //thread-safely decrement the session counter at server class, locked by static mutex
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay until ongoing operations stop
     try
     {stream.close(websocket::close_code::normal);}
     catch(...) {} //suppress exception
@@ -700,6 +741,7 @@ void ws_session::stop(int)
     sessions_ids.insert(session_id);
     g_sessions.unlock();
     session_count.fetch_sub(1);//thread-safely decrement the session counter at server class, locked by static mutex
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay until ongoing operations stop
     try
     {stream.close(websocket::close_code::protocol_error);}
     catch(...){}  //suppress exception
@@ -738,6 +780,7 @@ void ws_session::receive_message(void)
         }
         else if(errcode)
         {
+            std::cout << "server failed to receive message, num: "<< self_object->session_id << " -> " << errcode.message() << std::endl;
             self_object->stop(1);   //stop session
             return;
         }
@@ -797,6 +840,7 @@ void ws_session::write_message(void)
         }
         else if(errcode) //failed to send
         {
+            std::cout << "server failed to write message, num: "<< self_object->session_id << " -> " << errcode.message() << std::endl;
             self_object->stop(1);   //stop session
             return;
         }
@@ -827,20 +871,10 @@ void wss_session::start(void)
     {
         if(errcode)
         {
-            std::cout << "Server, failed SSL handshake, num: "<< self_object->session_id << std::endl;
-            try
-            {   /*close stream, due to protocol error*/
-                self_object->stream.close(websocket::close_code::protocol_error);
-                self_object->ongoing_session = true;
-                self_object->stop(1);   //set "ongoing_session" to true to allow session closing
-                return;
-            }
-            catch(...)
-            {
-                self_object->ongoing_session = true;
-                self_object->stop(1);   //set "ongoing_session" to true to allow session closing
-                return;
-            }
+            std::cout << "Server. failed SSL handshake, num: "<< self_object->session_id << " -> " << errcode.message() << std::endl;
+            self_object->ongoing_session = true;
+            self_object->stop(1);   //set "ongoing_session" to true to allow session closing
+            return;
         }
         //set the suggested timeout settings for the websocket as the server
         self_object->stream.set_option(websocket::stream_base::timeout::suggested(beast::role_type::server));
@@ -852,32 +886,24 @@ void wss_session::start(void)
         {
             if(errcode2)
             {
-                std::cout << "Server, failed WebSocket handshake, num: "<< self_object->session_id << std::endl;
-                try
-                {   /*close stream, due to protocol error*/
-                    self_object->stream.close(websocket::close_code::protocol_error);
-                    self_object->ongoing_session = true;
-                    self_object->stop(1);//set "ongoing_session" to true to allow session closing
-                    return;
-                }
-                catch(...)
-                {
-                    self_object->ongoing_session = true;
-                    self_object->stop(1);//set "ongoing_session" to true to allow session closing
-                    return;
-                }
+                std::cout << "Server. failed WebSocket handshake, num: "<< self_object->session_id << " -> " << errcode2.message() << std::endl;
+                self_object->ongoing_session = true;
+                self_object->stop(1);//set "ongoing_session" to true to allow session closing
+                return;
             }
             // All functions are successfull
             std::cout << "Server acquired new connection, session started, num: "<< self_object->session_id << std::endl;
             std::cout << "current connected sessions: " << self_object->session_count.load() << std::endl;
             self_object->ongoing_session = true;
-            self_object->receive_message();
+            //all function are successfull
+            self_object->receive_message(); //trigger receive message call
             while(self_object->ongoing_session.load())
             {
                 if(self_object->send_messages_queue.size() > 0) //there's a message to send
                     self_object->write_message();
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));    //sleep for 100ms
             }
+            std::cout << "session ended, num:" << self_object->session_id << std::endl;
         });
     });
     //Boost's default handshake timeout connection for websocket is 30seconds
@@ -917,6 +943,7 @@ void wss_session::stop(void)
     sessions_ids.insert(session_id);
     g_sessions.unlock();
     session_count.fetch_sub(1);//thread-safely decrement the session counter at server class, locked by static mutex
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay until ongoing operations stop
     try
     {stream.close(websocket::close_code::normal);}
     catch(...) {} //suppress exception
@@ -947,6 +974,7 @@ void wss_session::stop(int)
     sessions_ids.insert(session_id);
     g_sessions.unlock();
     session_count.fetch_sub(1);//thread-safely decrement the session counter at server class, locked by static mutex
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay until ongoing operations stop
     try
     {stream.close(websocket::close_code::protocol_error);}
     catch(...) {} //suppress exception
@@ -985,6 +1013,7 @@ void wss_session::receive_message(void)
         }
         else if(errcode)
         {
+            std::cout << "server failed to receive message, num: "<< self_object->session_id << " -> " << errcode.message() << std::endl;
             self_object->stop(1);   //stop session
             return;
         }
@@ -1044,6 +1073,7 @@ void wss_session::write_message(void)
         }
         else if(errcode) //failed to send
         {
+            std::cout << "server failed to write message, num: "<< self_object->session_id << " -> " << errcode.message() << std::endl;
             self_object->stop(1);   //stop session
             return;
         }

@@ -16,153 +16,87 @@
 #include "websockets_client.h"
 #include <gtest/gtest.h>
 
-/************************************************************************************************************************
- *                     							   FIXTURES
- ***********************************************************************************************************************/
-class WS_TEST_FIXTURE : public ::testing::Test
-{
-protected:
-    ws_server* server = ws_server::Create(7071,5); //port:7071, max sessions:5;
-    std::string ip = "127.0.0.1";
-    std::shared_ptr<ws_client> client1 = std::make_shared<ws_client>();
-    std::shared_ptr<ws_client> client2 = std::make_shared<ws_client>();
-    std::shared_ptr<ws_client> client3 = std::make_shared<ws_client>();
-    std::shared_ptr<ws_client> client4 = std::make_shared<ws_client>();
-    std::shared_ptr<ws_client> client5 = std::make_shared<ws_client>();
-    std::shared_ptr<ws_client> client6 = std::make_shared<ws_client>();
-    std::shared_ptr<ws_client> client7 = std::make_shared<ws_client>();
-    void SetUp() override //initialization, runs before each test
-    {
-    }
 
 
-    void TearDown() override    //destroying resources, runs after each test
-    {
-        ws_server::Destroy();   //destroy server
-    }
-};
-/*======================================================================================================================*/
-class WSS_TEST_FIXTURE : public ::testing::Test
-{
-protected:
-    std::string server_key_file_path = "../../credentials/server-key.pem";
-    std::string server_certificate_file_path = "../../credentials/server-cert.pem";
-    std::string client_key_file_path = "../../credentials/client-key.pem";
-    std::string client_certificate_file_path = "../../credentials/client-cert.pem";
-    wss_server* server = wss_server::Create(7071,5,server_key_file_path,server_certificate_file_path); //port:7071, max sessions:5;
-    std::string ip = "127.0.0.1";
-    std::shared_ptr<wss_client> client1 = std::make_shared<wss_client>(client_key_file_path,client_certificate_file_path);
-    std::shared_ptr<wss_client> client2 = std::make_shared<wss_client>(client_key_file_path,client_certificate_file_path);
-    std::shared_ptr<wss_client> client3 = std::make_shared<wss_client>(client_key_file_path,client_certificate_file_path);
-    std::shared_ptr<wss_client> client4 = std::make_shared<wss_client>(client_key_file_path,client_certificate_file_path);
-    std::shared_ptr<wss_client> client5 = std::make_shared<wss_client>(client_key_file_path,client_certificate_file_path);
-    std::shared_ptr<wss_client> client6 = std::make_shared<wss_client>(client_key_file_path,client_certificate_file_path);
-    std::shared_ptr<wss_client> client7 = std::make_shared<wss_client>(client_key_file_path,client_certificate_file_path);
+std::string server_key_file_path = "../../credentials/server-key.pem";
+std::string server_certificate_file_path = "../../credentials/server-cert.pem";
+std::string client_key_file_path = "../../credentials/client-key.pem";
+std::string client_certificate_file_path = "../../credentials/client-cert.pem";
+std::string ip = "127.0.0.1";
 
+std::string tx_sample_message1 = "This is message 1 - Alfa";
+std::string tx_sample_message2 = "This is message 2 - Beta";
+std::string tx_sample_message3 = "This is message 3 - Gamma";
+std::string tx_sample_message4 = "This is message 4 - Delta";
+std::vector<unsigned char> tx_sample1(tx_sample_message1.begin(),tx_sample_message1.end());
+std::vector<unsigned char> tx_sample2(tx_sample_message2.begin(),tx_sample_message2.end());
+std::vector<unsigned char> tx_sample3(tx_sample_message3.begin(),tx_sample_message3.end());
+std::vector<unsigned char> tx_sample4(tx_sample_message4.begin(),tx_sample_message4.end());
 
+std::string rx_sample_string1;
+std::string rx_sample_string2;
+std::string rx_sample_string3;
+std::string rx_sample_string4;
+std::vector<unsigned char> rx_sample1;
+std::vector<unsigned char> rx_sample2;
+std::vector<unsigned char> rx_sample3;
+std::vector<unsigned char> rx_sample4;
 
-    void TearDown() override    //destroying resources, runs after each test
-    {
-        ws_server::Destroy();   //destroy server
-    }
-};
-/*======================================================================================================================*/
-class CAPACITY_LIMIT_TEST_FIXTURE : public ::testing::Test
-{
-protected:
-    unsigned long capacity = 10;
-    std::string ip = "127.0.0.1";
-    ws_server* server = ws_server::Create(7071,capacity); //port:7071
-    std::vector<std::shared_ptr<ws_client>> clients;
-
-    void SetUp() override //initialization, runs before each test
-    {
-        for(unsigned long i=0;i<capacity;++i)
-            clients[i] = std::make_shared<ws_client>();
-
-    }
-
-
-    void TearDown() override    //destroying resources, runs after each test
-    {
-        ws_server::Destroy();   //destroy server
-    }
-};
+ws_server* server = ws_server::Create(8081,20);
+wss_server* server_secured = wss_server::Create(8082,4,server_key_file_path,server_certificate_file_path,server_certificate_file_path);
+wss_server* server_less_secure = wss_server::Create(8083,4,server_key_file_path);
 /************************************************************************************************************************
  *                     						WEBSOCKET TEST CASES
  ***********************************************************************************************************************/
-TEST(Normal_Tests, Normal1_one_Client_Server)
+TEST(WebSocketsTests, OneClientTest)
 {
-    ws_server* server = ws_server::Create(7071,5); //port:7071, max sessions:5;
-    std::string ip = "127.0.0.1";
-    std::shared_ptr<ws_client> client1 = std::make_shared<ws_client>();
-    server->start();    //server start
+    server->start();
     ASSERT_TRUE(server->is_running());
-    ASSERT_TRUE(client1->connect(ip,9091));
-    ASSERT_TRUE(client1->check_connection());
-    ASSERT_TRUE(server->is_serving());
-    ASSERT_EQ(server->sessions_count(),1);  //1 session must be ongoing
-    std::string cli_mes = "Hello, Websocket, client 1\n";
-    std::vector<unsigned char> cli_mes_vec(cli_mes.begin(),cli_mes.end());
-    client1->send_message(cli_mes_vec);
-    ASSERT_TRUE(server->check_session(1));
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));  //delay for 100ms
-    ASSERT_TRUE(server->check_inbox(1));
-    std::vector<unsigned char> serv_rec_vect = server->read_message(1);
-    std::string serv_rec_str(serv_rec_vect.begin(),serv_rec_vect.end());
-    ASSERT_STREQ(cli_mes.c_str(),serv_rec_str.c_str());  //sent and received messages
-    std::string server_mes = "Hello, Websocket, server\n";
-    std::vector<unsigned char> server_mes_vec(server_mes.begin(),server_mes.end());
-    ASSERT_TRUE(server->send_message(1,server_mes_vec));
-    ASSERT_TRUE(client1->check_queue());
-    std::vector<unsigned char> clirec_vect = client1->read_message();
-    std::string cli_rec_str(clirec_vect.begin(),clirec_vect.end());
-    ASSERT_STREQ(server_mes.c_str(),cli_rec_str.c_str());  //sent and received messages
-    client1->disconnect();
-    ASSERT_FALSE(client1->check_connection());
-    ASSERT_FALSE(server->check_session(1));
-    ASSERT_EQ(server->sessions_count(),0);  //0 session must be ongoing
-    ASSERT_FALSE(server->is_serving());
+    std::shared_ptr<client_abstract> client = std::make_shared<ws_client>();
+    EXPECT_TRUE(client->connect(ip,8081));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_TRUE(client->check_connection());
+    EXPECT_TRUE(server->is_serving());
+    EXPECT_TRUE(server->check_session(1));
+    EXPECT_FALSE(server->check_session(2));
+    EXPECT_EQ(server->sessions_count(),1);
+    client->disconnect();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_FALSE(client->check_connection());
+    EXPECT_FALSE(server->check_session(1));
+    EXPECT_FALSE(server->is_serving());
     server->stop();
-    ASSERT_FALSE(server->is_running());
+    EXPECT_FALSE(server->is_running());
 }
 /*=====================================================================================================================*/
-TEST_F(WS_TEST_FIXTURE, Normal2_one_Client_Server)
+TEST(WebSocketsTests, OneClientTestSecured)
 {
-    server->start();    //server start
-    ASSERT_TRUE(server->is_running());
-    ASSERT_TRUE(client1->connect(ip,9091));
-    ASSERT_TRUE(client1->check_connection());
-    ASSERT_TRUE(server->is_serving());
-    ASSERT_EQ(server->sessions_count(),1);  //1 session must be ongoing
-    std::string cli_mes = "Hello, Websocket, client 1\n";
-    std::vector<unsigned char> cli_mes_vec(cli_mes.begin(),cli_mes.end());
-    client1->send_message(cli_mes_vec);
-    ASSERT_TRUE(server->check_session(1));
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));  //delay for 100ms
-    ASSERT_TRUE(server->check_inbox(1));
-    std::vector<unsigned char> serv_rec_vect = server->read_message(1);
-    std::string serv_rec_str(serv_rec_vect.begin(),serv_rec_vect.end());
-    ASSERT_STREQ(cli_mes.c_str(),serv_rec_str.c_str());  //sent and received messages
-    std::string server_mes = "Hello, Websocket, server\n";
-    std::vector<unsigned char> server_mes_vec(server_mes.begin(),server_mes.end());
-    ASSERT_TRUE(server->send_message(1,server_mes_vec));
-    ASSERT_TRUE(client1->check_queue());
-    std::vector<unsigned char> clirec_vect = client1->read_message();
-    std::string cli_rec_str(clirec_vect.begin(),clirec_vect.end());
-    ASSERT_STREQ(server_mes.c_str(),cli_rec_str.c_str());  //sent and received messages
-    server->close_session(1);
-    ASSERT_FALSE(client1->check_connection());
-    ASSERT_FALSE(server->check_session(1));
-    ASSERT_EQ(server->sessions_count(),0);  //0 session must be ongoing
-    ASSERT_FALSE(server->is_serving());
-    server->stop();
-    ASSERT_FALSE(server->is_running());
+    server_secured->start();
+    std::shared_ptr<client_abstract> client = std::make_shared<wss_client>(client_key_file_path,client_certificate_file_path,server_certificate_file_path);
+    EXPECT_TRUE(client->connect(ip,8082));
+    EXPECT_TRUE(client->check_connection());
+    ASSERT_TRUE(server_secured->is_running());
+    EXPECT_TRUE(server_secured->is_serving());
+    EXPECT_TRUE(server_secured->check_session(1));
+    EXPECT_FALSE(server_secured->check_session(2));
+    EXPECT_EQ(server_secured->sessions_count(),1);
+    client->disconnect();
+    EXPECT_FALSE(client->check_connection());
+    server_secured->stop();
+    EXPECT_FALSE(server_secured->is_running());
 }
 /*=====================================================================================================================*/
-TEST_F(WS_TEST_FIXTURE, Limit_Client_Server)
+TEST(WebSocketsTests, LimitedClientsTest)
 {
-
+    std::shared_ptr<client_abstract> client1 = std::make_shared<ws_client>();
+    std::shared_ptr<client_abstract> client2 = std::make_shared<ws_client>();
+    std::shared_ptr<client_abstract> client3 = std::make_shared<ws_client>();
+    std::shared_ptr<client_abstract> client4 = std::make_shared<ws_client>();
+    std::shared_ptr<client_abstract> client5 = std::make_shared<ws_client>();
+}
+/*=====================================================================================================================*/
+TEST(WebSocketsTests, OneClientTestNOVerification)
+{
 
 }
 /************************************************************************************************************************

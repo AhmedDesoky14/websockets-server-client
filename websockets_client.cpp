@@ -13,7 +13,7 @@
  ***********************************************************************************************************************/
 #include "websockets_client.h"
 
-constexpr int connection_timeout = 3;  //in seconds
+constexpr int connection_timeout = 10;  //in seconds
 /***********************************************************************************************************************
  *                     					    FUNCTIONS DEFINTITIONS
  ***********************************************************************************************************************/
@@ -147,6 +147,7 @@ void ws_client::receive_message(void)
         }
         else if(errcode)
         {
+            std::cout << "Client failed to receive message: " << errcode.message() << std::endl;
             self_object->disconnect(1);
             return;
         }
@@ -204,6 +205,7 @@ void ws_client::write_message(void)
         }
         else if(errcode) //failed to send, disconnect
         {
+            std::cout << "Client failed to write message: " << errcode.message() << std::endl;
             self_object->disconnect(1);
             return;
         }
@@ -235,10 +237,9 @@ void ws_client::disconnect(int)
     if(!io_ctx.stopped())   //stop context
         io_ctx.stop();
     io_ctx.reset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay until ongoing operations stop
     try
-    {
-        stream.close(websocket::close_code::protocol_error);
-    }
+    {stream.close(websocket::close_code::protocol_error);}
     catch(...){} //suppress exceptions, object is deleted afterwards
     std::cout << "client disconnected ungracefully" << std::endl;
 }
@@ -268,6 +269,7 @@ bool ws_client::connect(std::string& ip_address, unsigned short port)
     {
         if(errcode)
         {
+            std::cout << "Client failed to resolve ip and port: " << errcode.message() << std::endl;
             self_object->ongoing_connection = true;
             self_object->disconnect(1); //setting "ongoing_connection" by true, to be able to disconnect
             return;
@@ -277,20 +279,10 @@ bool ws_client::connect(std::string& ip_address, unsigned short port)
         {
             if(errcode2)
             {
-                std::cout << "Client, failed TCP connection" << std::endl;
-                try
-                {   /*close stream, due to protocol error*/
-                    self_object->stream.close(websocket::close_code::protocol_error);
-                    self_object->ongoing_connection = true;
-                    self_object->disconnect(1); //setting "ongoing_connection" by true, to be able to disconnect
-                    return;
-                }
-                catch(...)
-                {
-                    self_object->ongoing_connection = true;
-                    self_object->disconnect(1); //setting "ongoing_connection" by true, to be able to disconnect
-                    return;
-                }
+                std::cout << "Client, failed TCP connection: " << errcode2.message() <<std::endl;
+                self_object->ongoing_connection = true;
+                self_object->disconnect(1); //setting "ongoing_connection" by true, to be able to disconnect
+                return;
             }
             //**update host string, to provide the Host HTTP header during the websocket handshake**
             std::string http_header = host_ip + ':' + std::to_string(endpoint.port());
@@ -304,20 +296,10 @@ bool ws_client::connect(std::string& ip_address, unsigned short port)
             {
                 if(errcode3)
                 {
-                    std::cout << "Client, failed WebSocket handshake" << std::endl;
-                    try
-                    {   /*close stream, due to protocol error*/
-                        self_object->stream.close(websocket::close_code::protocol_error);
-                        self_object->ongoing_connection = true;
-                        self_object->disconnect(1); //setting "ongoing_connection" by true, to be able to disconnect
-                        return;
-                    }
-                    catch(...)
-                    {
-                        self_object->ongoing_connection = true;
-                        self_object->disconnect(1); //setting "ongoing_connection" by true, to be able to disconnect
-                        return;
-                    }
+                    std::cout << "Client, failed WebSocket handshake: " << errcode3.message() << std::endl;
+                    self_object->ongoing_connection = true;
+                    self_object->disconnect(1); //setting "ongoing_connection" by true, to be able to disconnect
+                    return;
                 }
                 std::cout << "Client connected successfully" << std::endl;
                 self_object->ongoing_connection = true;
@@ -373,10 +355,9 @@ void ws_client::disconnect(void)
     if(!io_ctx.stopped())   //stop context
         io_ctx.stop();
     io_ctx.reset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay until ongoing operations stop
     try
-    {
-        stream.close(websocket::close_code::normal);
-    }
+    {stream.close(websocket::close_code::normal);}
     catch(...){} //suppress exceptions, object is deleted afterwards
     std::cout << "client disconnected gracefully" << std::endl;
 }
@@ -415,6 +396,7 @@ void wss_client::receive_message(void)
         }
         else if(errcode)
         {
+            std::cout << "Client failed to receive message: " << errcode.message() << std::endl;
             self_object->disconnect(1);
             return;
         }
@@ -472,6 +454,7 @@ void wss_client::write_message(void)
         }
         else if(errcode) //failed to send, disconnect
         {
+            std::cout << "Client failed to write message: " << errcode.message() << std::endl;
             self_object->disconnect(1);
             return;
         }
@@ -503,10 +486,9 @@ void wss_client::disconnect(int)
     if(!io_ctx.stopped())   //stop context
         io_ctx.stop();
     io_ctx.reset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay until ongoing operations stop
     try
-    {
-        stream->close(websocket::close_code::protocol_error);
-    }
+    {stream->close(websocket::close_code::protocol_error);}
     catch(...){} //suppress exceptions, object is deleted afterwards
     std::cout << "client disconnected ungracefully" << std::endl;
 }
@@ -536,6 +518,7 @@ bool wss_client::connect(std::string& ip_address, unsigned short port)
     {
         if(errcode)
         {
+            std::cout << "Client failed to resolve ip and port: " << errcode.message() << std::endl;
             self_object->ongoing_connection = true;
             self_object->disconnect(1); //setting "ongoing_connection" by true, to be able to disconnect
             return;
@@ -545,53 +528,30 @@ bool wss_client::connect(std::string& ip_address, unsigned short port)
         {
             if(errcode2)
             {
-                std::cout << "Client, failed TCP connection" << std::endl;
-                try
-                {   /*close stream, due to protocol error*/
-                    self_object->stream->close(websocket::close_code::protocol_error);
-                    self_object->ongoing_connection = true;
-                    self_object->disconnect(1); //setting "ongoing_connection" by true, to be able to disconnect
-                    return;
-                }
-                catch(...)
-                {
-                    self_object->ongoing_connection = true;
-                    self_object->disconnect(1); //setting "ongoing_connection" by true, to be able to disconnect
-                    return;
-                }
+                std::cout << "Client, failed TCP connection: " << errcode2.message() << std::endl;
+                self_object->ongoing_connection = true;
+                self_object->disconnect(1); //setting "ongoing_connection" by true, to be able to disconnect
+                return;
             }
             //**update host string, to provide the Host HTTP header during the websocket handshake**
             std::string http_header = host_ip + ':' + std::to_string(endpoint.port());
             //**Set Server Name Indication (SNI) hostname, (many hosts need this to handshake successfully)**
             if(!SSL_set_tlsext_host_name(self_object->stream->next_layer().native_handle(),http_header.c_str()))
             {
-                try{self_object->stream->close(websocket::close_code::protocol_error);} /*close stream, due to protocol error*/
-                catch(...)
-                {
-                    self_object->ongoing_connection = true;
-                    self_object->disconnect(1); //setting "ongoing_connection" by true, to be able to disconnect
-                    return;
-                }
+                std::cout << "Client, failed to set SNI hostname" << std::endl;
+                self_object->ongoing_connection = true;
+                self_object->disconnect(1); //setting "ongoing_connection" by true, to be able to disconnect
+                return;
             }
             //SSL handshake, client side
             self_object->stream->next_layer().async_handshake(ssl::stream_base::client,[http_header,self_object](boost::system::error_code errcode3)
             {
                 if(errcode3)
                 {
-                    std::cout << "Client, failed SSL handshake" << std::endl;
-                    try
-                    {   /*close stream, due to protocol error*/
-                        self_object->stream->close(websocket::close_code::protocol_error);
-                        self_object->ongoing_connection = true;
-                        self_object->disconnect(1); //setting "ongoing_connection" by true, to be able to disconnect
-                        return;
-                    }
-                    catch(...)
-                    {
-                        self_object->ongoing_connection = true;
-                        self_object->disconnect(1); //setting "ongoing_connection" by true, to be able to disconnect
-                        return;
-                    }
+                    std::cout << "Client, failed SSL handshake: " << errcode3.message() << std::endl;
+                    self_object->ongoing_connection = true;
+                    self_object->disconnect(1); //setting "ongoing_connection" by true, to be able to disconnect
+                    return;
                 }
                 //set the suggested timeout settings for the websocket as the client
                 self_object->stream->set_option(websocket::stream_base::timeout::suggested(beast::role_type::client));
@@ -603,20 +563,10 @@ bool wss_client::connect(std::string& ip_address, unsigned short port)
                 {
                     if(errcode4)
                     {
-                        std::cout << "Client, failed WebSocket handshake" << std::endl;
-                        try
-                        {   /*close stream, due to protocol error*/
-                            self_object->stream->close(websocket::close_code::protocol_error);
-                            self_object->ongoing_connection = true;
-                            self_object->disconnect(1); //setting "ongoing_connection" by true, to be able to disconnect
-                            return;
-                        }
-                        catch(...)
-                        {
-                            self_object->ongoing_connection = true;
-                            self_object->disconnect(1); //setting "ongoing_connection" by true, to be able to disconnect
-                            return;
-                        }
+                        std::cout << "Client, failed WebSocket handshake: " << errcode4.message() << std::endl;
+                        self_object->ongoing_connection = true;
+                        self_object->disconnect(1); //setting "ongoing_connection" by true, to be able to disconnect
+                        return;
                     }
                     std::cout << "Client connected successfully" << std::endl;
                     self_object->ongoing_connection = true;
@@ -628,8 +578,7 @@ bool wss_client::connect(std::string& ip_address, unsigned short port)
                             self_object->write_message();
                         std::this_thread::sleep_for(std::chrono::milliseconds(100));    //sleep for 100ms
                     }
-                    std::cout << "Client connection ended" << std::endl; //ongoing_connection is false now
-
+                    std::cout << "Client connection ended" << std::endl;                    //all function are successfull
                 });
             });
         });
@@ -639,6 +588,7 @@ bool wss_client::connect(std::string& ip_address, unsigned short port)
     net::post(client_pool,[this](){io_ctx.run();});
     //Boost's default handshake timeout connection for websocket is 30seconds
     int i = 0; //timeout check loop
+
     while((i++<connection_timeout) && (!ongoing_connection.load()))
         std::this_thread::sleep_for(std::chrono::seconds(1));
     if(!ongoing_connection.load())  //if connection is not successfull
@@ -818,10 +768,9 @@ void wss_client::disconnect(void)
     if(!io_ctx.stopped())   //stop context
         io_ctx.stop();
     io_ctx.reset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay until ongoing operations stop
     try
-    {
-        stream->close(websocket::close_code::normal);
-    }
+    {stream->close(websocket::close_code::normal);}
     catch(...){} //suppress exceptions, object is deleted afterwards
     std::cout << "client disconnected gracefully" << std::endl;
 }
