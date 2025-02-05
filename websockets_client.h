@@ -72,6 +72,7 @@ class client_abstract
 {
 protected:
     std::atomic<bool> ongoing_connection = false;   //atomic boolean to indetify connection status
+    std::atomic<bool> self_disconnected = false;   //atomic boolean to if connection is lost during ongoing connection
     std::mutex read_mutex;      //mutex for reading buffer
     std::mutex send_mutex;      //mutex for sending buffer
     std::deque<std::vector<unsigned char>> read_messages_queue;  //queue to store messages to read
@@ -81,10 +82,12 @@ protected:
     virtual ~client_abstract(void) = default;
     virtual void receive_message(void) = 0;
     virtual void write_message(void) = 0;
-    virtual void disconnect(int) = 0;   //ungracefull disconnection
+    virtual void disconnect(int) = 0;   //self disconnection
 public:
     virtual bool connect(std::string& host, unsigned short) = 0;
-    virtual void disconnect(void) = 0;  //ungracefull disconnection
+    virtual void disconnect(void) = 0;  //gracefull disconnection
+    virtual bool check_failed_connection(void) = 0; //check if there's failed connection, if so, call reset
+    virtual void reset(void) = 0;   //reset option, necessary to re-initialize client if connection failed and self-disconnected
     virtual std::vector<unsigned char> read_message(void) = 0;
     virtual void send_message(const std::vector<unsigned char>&) = 0;
     virtual bool check_connection(void) = 0;
@@ -104,19 +107,23 @@ public:
 class ws_client_base : public client_abstract
 {
 protected:
-    net::io_context io_ctx;    //the client io context for asynchronous I/O operations
+    std::unique_ptr<net::io_context> io_ctx;     //the client io context for asynchronous I/O operations, unique pointer
+    //net::io_context io_ctx;    //the client io context for asynchronous I/O operations
     tcp::resolver resolver;     //ip and port resolver
-    boost::asio::thread_pool client_pool;   //threads pool the client, default=2, 1read/1write
-    net::strand<net::io_context::executor_type> strand;//strand to io_context to prevent racing between the threads for the async operations
+    std::unique_ptr<net::thread_pool> client_pool;  //threads pool the client (unique pointer), default=2, 1read/1write
+    //net::thread_pool client_pool;   //threads pool the client, default=2, 1read/1write
+    std::unique_ptr<net::strand<net::io_context::executor_type>> strand;//strand to io_context to prevent racing between the threads for the async operations
+    //net::strand<net::io_context::executor_type> strand;//strand to io_context to prevent racing between the threads for the async operations
 protected:
     explicit ws_client_base(void)
-        : io_ctx(), resolver(io_ctx), client_pool(2), strand(io_ctx.get_executor()) {} //2threads, 1read/1write
-    virtual ~ws_client_base(void) {client_pool.join();}//join threads until all finish their work
+        : io_ctx(std::make_unique<net::io_context>()), resolver(*io_ctx), /*client_pool(2),*/ strand(std::make_unique<net::strand<net::io_context::executor_type>>(io_ctx->get_executor())) {} //2threads, 1read/1write
+    virtual ~ws_client_base(void) = default;//join threads until all finish their work
 public:
     std::vector<unsigned char> read_message(void) override;
     void send_message(const std::vector<unsigned char>&) override;
     bool check_connection(void) override;
     bool check_inbox(void) override;
+    bool check_failed_connection(void) override;
 };
 /************************************************************************************************************************
 * Class Name: server_abstract
@@ -132,16 +139,18 @@ public:
 class ws_client : public ws_client_base, public std::enable_shared_from_this<ws_client>
 {
 protected:
-    ws_stream stream;   //I/O stream
+    std::unique_ptr<ws_stream> stream; //I/O stream, unique pointer
+    //ws_stream stream;   //I/O stream
 protected:
     void receive_message(void) override;
     void write_message(void) override;
     void disconnect(int) override;
 public:
-    explicit ws_client(void) : ws_client_base(), stream(io_ctx) {}
-    ~ws_client(void) = default;
+    explicit ws_client(void) : ws_client_base(), stream(std::make_unique<ws_stream>(*io_ctx)) {}
+    ~ws_client(void){this->disconnect();} //disconnect before destruction
     bool connect(std::string&, unsigned short) override;
     void disconnect(void) override;
+    void reset(void) override;
 };
 /************************************************************************************************************************
 * Class Name: server_abstract
@@ -169,17 +178,19 @@ public:
         ws_client_base()
         {
             Set_SSL_CTX(ssl_ctx,key_file,certificate_file,CA_cert_file);
-            stream = std::make_unique<wss_stream>(io_ctx,ssl_ctx);  //late initialization instead of the initialization list
+            stream = std::make_unique<wss_stream>(*io_ctx,ssl_ctx);  //late initialization instead of the initialization list
         }
     explicit wss_client(const std::string key_file) :
         ws_client_base()
     {
         Set_SSL_CTX(ssl_ctx,key_file);
-        stream = std::make_unique<wss_stream>(io_ctx,ssl_ctx);  //late initialization instead of the initialization list
+        stream = std::make_unique<wss_stream>(*io_ctx,ssl_ctx);  //late initialization instead of the initialization list
     }
-    ~wss_client(void) = default;
+    ~wss_client(void){this->disconnect();} //disconnect before destruction
     bool connect(std::string&, unsigned short) override;
     void disconnect(void) override;
+    void reset(void) override;
+
 };
 
 

@@ -1,7 +1,7 @@
 #include <QCoreApplication>
 //#include "websocket_old.h"
-//#include "test_cases.h"
-#include "tests.h"
+#include "test_cases.h"
+//#include "tests.h"
 int main(int argc, char *argv[])
 {
     //QCoreApplication a(argc, argv);
@@ -157,15 +157,15 @@ int main(int argc, char *argv[])
     //TestCase4();
     //TestCase5();
     //TestCase6();
-    //TestCase7();
+    TestCase7();
 
 
 
 
 
     /*===========================================================================*/
-    testing::InitGoogleTest(&argc,argv);
-    return RUN_ALL_TESTS();
-    //return 0;
+    //testing::InitGoogleTest(&argc,argv);
+    //return RUN_ALL_TESTS();
+    return 0;
     //return a.exec();
 }

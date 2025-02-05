@@ -737,13 +737,16 @@ main.o: ../../main.cpp /opt/Qt/6.5.3/gcc_64/include/QtCore/QCoreApplication \
 		/opt/Qt/6.5.3/gcc_64/include/QtCore/qpointer.h \
 		/opt/Qt/6.5.3/gcc_64/include/QtCore/qpromise.h \
 		/opt/Qt/6.5.3/gcc_64/include/QtCore/qvariant.h \
-		../../tests.h \
+		../../test_cases.h \
 		../../websockets_server.h \
 		../../ssl_conf.h \
 		../../websockets_client.h
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o main.o ../../main.cpp
 
-test_cases.o: ../../test_cases.cpp 
+test_cases.o: ../../test_cases.cpp ../../test_cases.h \
+		../../websockets_server.h \
+		../../ssl_conf.h \
+		../../websockets_client.h
 	$(CXX) -c $(CXXFLAGS) $(INCPATH) -o test_cases.o ../../test_cases.cpp
 
 websocket_old.o: ../../websocket_old.cpp ../../websocket_old.h

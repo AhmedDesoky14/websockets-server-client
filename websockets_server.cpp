@@ -22,7 +22,6 @@ std::mutex wss_server::access_mutex;             // Initialize static mutex
 wss_server* wss_server::server_instance2 = nullptr;  // Initialize static pointer to nullptr
 std::mutex wss_server::access_mutex2;             // Initialize static mutex
 
-std::mutex server_abstract::sessions_ctrl_mutex;
 
 constexpr int connection_timeout = 10;  //in seconds
 
@@ -33,33 +32,33 @@ constexpr int connection_timeout = 10;  //in seconds
  *                     					    FUNCTIONS DEFINTITIONS
  ***********************************************************************************************************************/
 
-void ws_server_base::lock_resources(ws_server_base* instance_ptr)
-{
-    //Safety for multithreads if block code
-    if(dynamic_cast<wss_server*>(instance_ptr)) //if the instance calling this function is "wss_server" (the ptr can be cast to it)
-    {
-        if(instance_ptr->verification_on) //if it's the one secured by verification
-            wss_server::access_mutex.lock();
-        else    //if it's the one not secured by verification
-            wss_server::access_mutex2.lock();
-    }
-    else    //if the instance calling this function is "ws_server"
-        ws_server::access_mutex.lock();
-}
+// void ws_server_base::lock_resources(ws_server_base* instance_ptr)
+// {
+//     //Safety for multithreads if block code
+//     if(dynamic_cast<wss_server*>(instance_ptr)) //if the instance calling this function is "wss_server" (the ptr can be cast to it)
+//     {
+//         if(instance_ptr->verification_on) //if it's the one secured by verification
+//             wss_server::access_mutex.lock();
+//         else    //if it's the one not secured by verification
+//             wss_server::access_mutex2.lock();
+//     }
+//     else    //if the instance calling this function is "ws_server"
+//         ws_server::access_mutex.lock();
+// }
 
-void ws_server_base::unlock_resources(ws_server_base* instance_ptr)
-{
-    //Safety for multithreads if block code
-    if(dynamic_cast<wss_server*>(instance_ptr)) //if the instance calling this function is "wss_server" (the ptr can be cast to it)
-    {
-        if(instance_ptr->verification_on) //if it's the one secured by verification
-            wss_server::access_mutex.unlock();
-        else    //if it's the one not secured by verification
-            wss_server::access_mutex2.unlock();
-    }
-    else    //if the instance calling this function is "ws_server"
-        ws_server::access_mutex.unlock();
-}
+// void ws_server_base::unlock_resources(ws_server_base* instance_ptr)
+// {
+//     //Safety for multithreads if block code
+//     if(dynamic_cast<wss_server*>(instance_ptr)) //if the instance calling this function is "wss_server" (the ptr can be cast to it)
+//     {
+//         if(instance_ptr->verification_on) //if it's the one secured by verification
+//             wss_server::access_mutex.unlock();
+//         else    //if it's the one not secured by verification
+//             wss_server::access_mutex2.unlock();
+//     }
+//     else    //if the instance calling this function is "ws_server"
+//         ws_server::access_mutex.unlock();
+// }
 
 
 
@@ -96,13 +95,21 @@ void ws_server_base::accept_connection(void)
         //         session_establishment_mutex.unlock();   //if locked,
         //     return;
         // }
-        ws_server_base::lock_resources(this);
-        if(errcode)
+        //ws_server_base::lock_resources(this);
+        if(errcode == boost::asio::error::operation_aborted)    //operation canceled
         {
             socket.close();
             std::cout << "A session failed to start: "<< errcode.message() << std::endl;
+
+
             //ws_server_base::unlock_resources(this);
-            //session_establishment_mutex.unlock();
+            session_establishment_mutex.unlock();
+            return;
+        }
+        else if(errcode)    //any other error
+        {
+            socket.close();
+            std::cout << "A session failed to start: "<< errcode.message() << std::endl;
         }
         else if(session_count < max_sessions)
         {
@@ -114,11 +121,19 @@ void ws_server_base::accept_connection(void)
             sessions_ids.erase(min_id_iter);
             std::shared_ptr<session_abstract> new_session;  //shared_ptr to the new session
             if(secure) //if server is secure
+                // new_session = std::shared_ptr<wss_session>(new wss_session(new_session_id,session_count,sessions_ids,sessions,
+                //         g_sessions,io_ctx,std::move(socket),*ssl_ctx));
+                //new_session = wss_session::create_wss_session(new_session_id,session_count,sessions_ids,sessions,
+                    //g_sessions,io_ctx,std::move(socket),*ssl_ctx);
                 new_session = std::make_shared<wss_session>(new_session_id,session_count,sessions_ids,sessions,
-                    g_sessions,io_ctx,std::move(socket),*ssl_ctx);
+                    g_sessions,*io_ctx,std::move(socket),*ssl_ctx);
             else    //not secure
+                // new_session = std::shared_ptr<ws_session>(new ws_session(new_session_id,session_count,sessions_ids,sessions,
+                //         g_sessions,io_ctx,std::move(socket)));
+                //new_session = ws_session::create_ws_session(new_session_id,session_count,sessions_ids,sessions,
+                    //g_sessions,io_ctx,std::move(socket));
                 new_session = std::make_shared<ws_session>(new_session_id,session_count,sessions_ids,sessions,
-                    g_sessions,io_ctx,std::move(socket));
+                    g_sessions,*io_ctx,std::move(socket));
             sessions.insert({new_session_id,new_session});  //push the session handler and id to the map to allow its handle
             g_sessions.unlock();
             try{new_session->start();}   //start session. to handle "start" exceptions running in this thread
@@ -140,14 +155,10 @@ void ws_server_base::accept_connection(void)
             //ws_server_base::unlock_resources(this);
             //session_establishment_mutex.unlock();
         }
-        ws_server_base::unlock_resources(this);
-        //this is to make sure that the mutex is unlocked to accept new connections. if and only if the mutex is not locked
-        if(!session_establishment_mutex.try_lock()) //if not locked, lock then unlock
-            session_establishment_mutex.unlock();
-        else
-            session_establishment_mutex.unlock();   //if locked,
-        if(server_running)
-            accept_connection();  // Continue accepting new connections
+        //ws_server_base::unlock_resources(this);
+        session_establishment_mutex.unlock();   //if locked,
+        //(server_running.load())
+        accept_connection();  // Continue accepting new connections
     });
 
     //current connection being in establishment finishes then to the next new establishment
@@ -240,33 +251,44 @@ void ws_server_base::accept_connection(void)
 ************************************************************************************************************************/
 void ws_server_base::start(void)
 {
-    ws_server_base::lock_resources(this);
+    std::lock_guard<std::mutex> lock(start_mutex);
+    //ws_server_base::lock_resources(this);
     if(server_running)
     {
-        ws_server_base::unlock_resources(this);
+        //ws_server_base::unlock_resources(this);
+        //start_mutex.unlock();
         return; //already running
     }
-    tcp_acceptor = tcp::acceptor(io_ctx,tcp::endpoint(tcp::v4(),server_port));  //initialze the tcp_accpetor
-    tcp_acceptor.listen();
+    //tcp_acceptor.open(server_endpoint.protocol());
+    //tcp_acceptor.set_option(net::socket_base::reuse_address(true));
+    //tcp_acceptor.bind(server_endpoint);
+    //tcp_acceptor.listen();
+    //io_ctx.reset();
     server_running = true;
-    this->accept_connection();
-    std::cout << "Server started" << std::endl;
     for(std::size_t k=0;k<max_sessions;++k) //initialize IDs
         sessions_ids.insert(k+1);
+    tcp_acceptor = tcp::acceptor(*io_ctx,tcp::endpoint(tcp::v4(),server_port));  //initialze the tcp_accpetor
+    tcp_acceptor.listen();
+    this->accept_connection();
+    //std::this_thread::sleep_for(std::chrono::milliseconds(100));    //sleep for 100ms until "tcp_acceptor.async_accept" called
     //creating number of threads equal to max allowed number of sessions x2 and run the io_context in all these threads
+    threads_pool = std::make_unique<net::thread_pool>(max_sessions*2);
     //this will make the server handle different sessions in different threads concurrently, each session 2threads, 1read/1write
-    if(!started_once)
-    {
-        for (std::size_t i=0; i < max_sessions*2; ++i)  //here check after stopping and starting again
-            net::post(threads_pool, [this](){io_ctx.run();});
-    }
-    started_once = true;
-    //this is to make sure that the mutex is unlocked to accept new connections. if and only if the mutex is not locked
-    if(!session_establishment_mutex.try_lock()) //if not locked, lock then unlock
-        session_establishment_mutex.unlock();
-    else
-        session_establishment_mutex.unlock();   //if locked,
-    ws_server_base::unlock_resources(this);
+     // if(!started_once)
+    //{
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    for (std::size_t i=0; i < max_sessions*2; ++i)  //here check after stopping and starting again
+        net::post(*threads_pool, [this](){io_ctx->run();});
+    //}
+    std::cout << "Server started" << std::endl;
+    //started_once = true;
+    // //this is to make sure that the mutex is unlocked to accept new connections. if and only if the mutex is not locked
+    // if(!session_establishment_mutex.try_lock()) //if not locked, lock then unlock
+    //     session_establishment_mutex.unlock();
+    // else
+    //     session_establishment_mutex.unlock();   //if locked,
+    //ws_server_base::unlock_resources(this);
+    //start_mutex.unlock();
     return;
 }
 /************************************************************************************************************************
@@ -286,15 +308,15 @@ void ws_server_base::start(void)
 ************************************************************************************************************************/
 void ws_server_base::stop(void)
 {
-    ws_server_base::lock_resources(this);
+    //ws_server_base::lock_resources(this);
+    std::lock_guard<std::mutex> lock(stop_mutex);
     if(!server_running)
     {
-        ws_server_base::unlock_resources(this);
+        //ws_server_base::unlock_resources(this);
+        //stop_mutex.unlock();
         return;
     }
     server_running = false; //stop server
-    //io_ctx.stop();  //stop context
-    //io_ctx.reset();
     tcp_acceptor.cancel();  //cancel all tcp connections
     for(auto& sess_iter : sessions) //close all running sessions
     {
@@ -304,6 +326,23 @@ void ws_server_base::stop(void)
         this->close_session(sess_iter.first);
     }
     tcp_acceptor.close();   //close port, all connections will be closed automatically
+    //tcp_acceptor = tcp::acceptor(io_ctx,tcp::endpoint(tcp::v4(),server_port));  //initialze the tcp_accpetor
+    //tcp_acceptor.listen();
+    // sessions.clear();   //clear threads pool
+    // sessions_ids.clear();
+    // session_count = 0;
+    // io_ctx.restart(); //reset io_context to exit all running tasks
+    while(!io_ctx->stopped());   //wait until io_context return
+    io_ctx->stop();  //make sure to stop context
+    threads_pool->join();    //join threads until it ends
+    threads_pool.reset();   //destory/delete threads pool object
+    //std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay
+    //io_ctx->restart(); //reset io_context to run again at re-start
+    io_ctx.reset();
+    //threads_pool->join();    //join threads until it ends
+    //threads_pool.reset();   //destory/delete threads pool object
+    io_ctx = std::make_unique<net::io_context>();
+    //threads_pool = net::thread_pool(max_sessions*2);  //re-initialze the threads pool with the new threads
     sessions.clear();   //clear threads pool
     sessions_ids.clear();
     session_count = 0;
@@ -325,10 +364,16 @@ void ws_server_base::stop(void)
     //threads_pool.join();        //join all threads until they finish
 
     //std::this_thread::sleep_for(std::chrono::milliseconds(100));//sleep until all handlers are executed and threads are ended
+    //threads_pool.join();    //join all threads until they finish
     std::cout << "Server stoped gracefully" << std::endl;
-    ws_server_base::unlock_resources(this);
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));    //delay so ongoing operations exit
-    return;
+    if(!session_establishment_mutex.try_lock()) //unlock this mutex if it is locked, assure its unlocked
+        session_establishment_mutex.unlock();
+    else
+        session_establishment_mutex.unlock();
+    //ws_server_base::unlock_resources(this);
+    //stop_mutex.unlock();
+    //std::this_thread::sleep_for(std::chrono::milliseconds(500));    //delay so ongoing operations exit
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay before ending
 }
 /************************************************************************************************************************
 * Function Name:
@@ -408,16 +453,17 @@ inline int ws_server_base::sessions_count(void)
 ************************************************************************************************************************/
 bool ws_server_base::send_message(int id, const std::vector<unsigned char>& message)
 {
-    ws_server_base::lock_resources(this);
+    //ws_server_base::lock_resources(this);
+    std::lock_guard<std::mutex> lock(send_message_mutex);
     auto session_iter = sessions.find(id);
     if(session_iter == sessions.end())   //id not found, not running
     {
-        ws_server_base::unlock_resources(this);
+        //ws_server_base::unlock_resources(this);
         return false;
     }
     auto session_handler = session_iter->second;    //stored weak_ptr to the session
     session_handler.lock()->send_message(message);
-    ws_server_base::unlock_resources(this);
+    //ws_server_base::unlock_resources(this);
     return true;
 }
 /************************************************************************************************************************
@@ -437,17 +483,18 @@ bool ws_server_base::send_message(int id, const std::vector<unsigned char>& mess
 ************************************************************************************************************************/
 std::vector<unsigned char> ws_server_base::read_message(int id)
 {
-    ws_server_base::lock_resources(this);
+    std::lock_guard<std::mutex> lock(read_message_mutex);
+    //ws_server_base::lock_resources(this);
     std::vector<unsigned char> msg;
     auto session_iter = sessions.find(id);
     if(session_iter == sessions.end())   //id not found, not running
     {
-        ws_server_base::unlock_resources(this);
+        //ws_server_base::unlock_resources(this);
         return msg; //empty message
     }
     auto session_handler = session_iter->second;    //stored weak_ptr to the session
     msg = session_handler.lock()->read_message();
-    ws_server_base::unlock_resources(this);
+    //ws_server_base::unlock_resources(this);
     return msg;
 }
 /************************************************************************************************************************
@@ -467,20 +514,22 @@ std::vector<unsigned char> ws_server_base::read_message(int id)
 ************************************************************************************************************************/
 bool ws_server_base::check_inbox(int id)
 {
-    ws_server_base::lock_resources(this);
+    //ws_server_base::lock_resources(this);
+    std::lock_guard<std::mutex> lock(check_inbox_mutex);
+
     auto session_iter = sessions.find(id);
     if(session_iter == sessions.end())   //id not found, not running
     {
-        ws_server_base::unlock_resources(this);
+        //ws_server_base::unlock_resources(this);
         return false;   //id not found or not running
     }
     auto session_handler = session_iter->second;    //stored weak_ptr to the session
     if(!session_handler.lock()->check_inbox()) //if inbox empty
     {
-        ws_server_base::unlock_resources(this);
+        //ws_server_base::unlock_resources(this);
         return false;   //inbox empty
     }
-    ws_server_base::unlock_resources(this);
+    //ws_server_base::unlock_resources(this);
     return true;
 }
 /************************************************************************************************************************
@@ -500,9 +549,10 @@ bool ws_server_base::check_inbox(int id)
 ************************************************************************************************************************/
 bool ws_server_base::check_session(int id)
 {
-    ws_server_base::lock_resources(this);
+    std::lock_guard<std::mutex> lock(session_check_mutex);
+    //ws_server_base::lock_resources(this);
     auto session_iter = sessions.find(id);
-    ws_server_base::unlock_resources(this);
+    //ws_server_base::unlock_resources(this);
     if(session_iter == sessions.end())   //id not found, not running
         return false;
     return true;
@@ -525,11 +575,11 @@ bool ws_server_base::check_session(int id)
 void ws_server_base::close_session(int id)
 {
     //ws_server_base::lock_resources(this);
-    std::lock_guard<std::mutex> lock(sessions_ctrl_mutex);
+    std::lock_guard<std::mutex> lock(session_close_mutex);
     auto session_iter = sessions.find(id);
     if(session_iter == sessions.end())   //id not found, not running
     {
-        ws_server_base::unlock_resources(this);
+        //ws_server_base::unlock_resources(this);
         return;
     }
     auto session_handler = session_iter->second;    //stored weak_ptr to the session
@@ -583,6 +633,8 @@ void ws_session_base::send_message(const std::vector<unsigned char>& message)
     send_mutex.lock();
     send_messages_queue.push_back(std::move(message));
     send_mutex.unlock();
+    this->write_message();  //call write message and give the write order
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));    //delay before ending and writing
     return;
 }
 /************************************************************************************************************************
@@ -665,13 +717,13 @@ void ws_session::start(void)
         std::cout << "current connected sessions: " << self_object->session_count.load() << std::endl;
         self_object->ongoing_session = true;
         self_object->receive_message(); //trigger receive message call
-        while(self_object->ongoing_session.load())
-        {
-            if(self_object->send_messages_queue.size() > 0) //there's a message to send
-                self_object->write_message();
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));    //sleep for 100ms
-        }
-        std::cout << "session ended, num:" << self_object->session_id << std::endl;
+        // while(self_object->ongoing_session.load())
+        // {
+        //     if(self_object->send_messages_queue.size() > 0) //there's a message to send
+        //         self_object->write_message();
+        //     std::this_thread::sleep_for(std::chrono::milliseconds(50));    //sleep for 50ms
+        // }
+        // std::cout << "session ended, num:" << self_object->session_id << std::endl;
     });
     //Boost's default handshake timeout connection for websocket is 30seconds
     int i = 0;  //timeout check loop
@@ -710,11 +762,33 @@ void ws_session::stop(void)
     sessions_ids.insert(session_id);
     g_sessions.unlock();
     session_count.fetch_sub(1); //thread-safely decrement the session counter at server class, locked by static mutex
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay until ongoing operations stop
-    try
-    {stream.close(websocket::close_code::normal);}
+    //std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay until ongoing operations stop
+    try{stream.close(websocket::close_code::normal);}
     catch(...) {} //suppress exception
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay before ending
+    std::cout << "session stopped, num:" << this->session_id << std::endl;
 }
+/************************************************************************************************************************
+* Function Name:
+* Class name:
+* Access:
+* Specifiers:
+* Running Thread: Mainthread
+* Sync/Async: Asynchronous
+* Reentrancy: Non-reentrant
+* Parameters (in):
+* Parameters (out):
+* Return value:
+* Description:
+*
+*
+************************************************************************************************************************/
+// ws_session* ws_session::create_ws_session(int id, std::atomic<std::size_t>& sessions_count,
+//     std::unordered_set<int>& id_set, std::unordered_map<int, std::weak_ptr<session_abstract>>& sessions_map,
+//     std::mutex& g_sessions_mutex, net::io_context& context,tcp::socket&& socket)
+// {
+//     return new ws_session(id,sessions_count, id_set, sessions_map, g_sessions_mutex, context, std::move(socket));
+// }
 /************************************************************************************************************************
 * Function Name:
 * Class name:
@@ -741,10 +815,11 @@ void ws_session::stop(int)
     sessions_ids.insert(session_id);
     g_sessions.unlock();
     session_count.fetch_sub(1);//thread-safely decrement the session counter at server class, locked by static mutex
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay until ongoing operations stop
-    try
-    {stream.close(websocket::close_code::protocol_error);}
+    //std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay until ongoing operations stop
+    try{stream.close(websocket::close_code::protocol_error);}
     catch(...){}  //suppress exception
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay before ending
+    std::cout << "session stopped, num:" << this->session_id << std::endl;
 }
 /************************************************************************************************************************
 * Function Name:
@@ -897,13 +972,13 @@ void wss_session::start(void)
             self_object->ongoing_session = true;
             //all function are successfull
             self_object->receive_message(); //trigger receive message call
-            while(self_object->ongoing_session.load())
-            {
-                if(self_object->send_messages_queue.size() > 0) //there's a message to send
-                    self_object->write_message();
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));    //sleep for 100ms
-            }
-            std::cout << "session ended, num:" << self_object->session_id << std::endl;
+            // while(self_object->ongoing_session.load())
+            // {
+            //     if(self_object->send_messages_queue.size() > 0) //there's a message to send
+            //         self_object->write_message();
+            //     std::this_thread::sleep_for(std::chrono::milliseconds(50));    //sleep for 50ms
+            // }
+            // std::cout << "session ended, num:" << self_object->session_id << std::endl;
         });
     });
     //Boost's default handshake timeout connection for websocket is 30seconds
@@ -943,11 +1018,33 @@ void wss_session::stop(void)
     sessions_ids.insert(session_id);
     g_sessions.unlock();
     session_count.fetch_sub(1);//thread-safely decrement the session counter at server class, locked by static mutex
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay until ongoing operations stop
-    try
-    {stream.close(websocket::close_code::normal);}
+    //std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay until ongoing operations stop
+    try{stream.close(websocket::close_code::normal);}
     catch(...) {} //suppress exception
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay before ending
+    std::cout << "session stopped, num:" << this->session_id << std::endl;
 }
+/************************************************************************************************************************
+* Function Name:
+* Class name:
+* Access:
+* Specifiers:
+* Running Thread: Mainthread
+* Sync/Async: Asynchronous
+* Reentrancy: Non-reentrant
+* Parameters (in):
+* Parameters (out):
+* Return value:
+* Description:
+*
+*
+************************************************************************************************************************/
+// std::shared_ptr<wss_session> wss_session::create_wss_session(int id, std::atomic<std::size_t>& sessions_count,
+//     std::unordered_set<int>& id_set, std::unordered_map<int, std::weak_ptr<session_abstract>>& sessions_map,
+//     std::mutex& g_sessions_mutex, net::io_context& context,tcp::socket&& socket, ssl::context& ssl_ctx)
+// {
+//     return new wss_session(id,sessions_count, id_set, sessions_map, g_sessions_mutex, context, std::move(socket),ssl_ctx);
+// }
 /************************************************************************************************************************
 * Function Name:
 * Class name:
@@ -974,10 +1071,11 @@ void wss_session::stop(int)
     sessions_ids.insert(session_id);
     g_sessions.unlock();
     session_count.fetch_sub(1);//thread-safely decrement the session counter at server class, locked by static mutex
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay until ongoing operations stop
-    try
-    {stream.close(websocket::close_code::protocol_error);}
+    //std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay until ongoing operations stop
+    try{stream.close(websocket::close_code::protocol_error);}
     catch(...) {} //suppress exception
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay before ending
+    std::cout << "session stopped, num:" << this->session_id << std::endl;
 }
 /************************************************************************************************************************
 * Function Name:

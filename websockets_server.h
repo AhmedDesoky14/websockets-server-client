@@ -78,7 +78,16 @@ protected:
     bool secure; //boolean to understand if the server is secured or not
     bool started_once = false;  //boolean to check if the server already started once or not
     unsigned short server_port; //opened port for the server
-    static std::mutex sessions_ctrl_mutex;   //mutex to prevent deadlock of calling close sessions inside stop function
+    //8 mutuxes for 8 functions to prevent racing from different threads to the same single instance
+    std::mutex start_mutex;     //mutex for start function
+    std::mutex stop_mutex;         //mutex for stop function
+    std::mutex send_message_mutex;   //mutex for send message
+    std::mutex read_message_mutex;   //mutex for read message
+    std::mutex check_inbox_mutex;   //mutex for check inbox
+    std::mutex session_check_mutex; //mutex for check_session function
+    std::mutex session_close_mutex;   //mutex to prevent deadlock of calling close sessions inside stop function
+    std::mutex session_establishment_mutex; //Mutex to prevent racing when creating new sessions
+    std::mutex g_sessions;   //mutex to protect shared access to map of IDs and sessions
     std::size_t max_sessions;   //max allowed sessions num
     std::atomic<std::size_t> session_count; //counter for sessions running
     std::atomic<bool> server_running = false;   //boolean to show if server is running or not
@@ -116,22 +125,25 @@ class ws_server_base : public server_abstract
 {
 protected:
     ssl::context* ssl_ctx; //SSL context shared_ptr passed to sessions by reference
-    net::io_context io_ctx;    //IO_context for asynchronous I/O operations
+    std::unique_ptr<net::io_context> io_ctx;
+    //net::io_context io_ctx;    //IO_context for asynchronous I/O operations
     tcp::acceptor tcp_acceptor; //TCP acceptor for connections accpeting
-    boost::asio::thread_pool threads_pool;  //Pool of threads to run server and sessions
-    std::mutex session_establishment_mutex; //Mutex to prevent racing when creating new sessions
-    std::mutex g_sessions;   //mutex to protect shared access to map of IDs and sessions
+    // tcp::endpoint server_endpoint;  //server's endpoint to bind to
+    std::unique_ptr<net::thread_pool> threads_pool; //Pool of threads to run server and sessions, unique pointer
+    //net::thread_pool threads_pool;  //Pool of threads to run server and sessions
+    //boost::asio::make_work_guard work;
+    //net::executor_work_guard<net::io_context::executor_type> work;  //work to prevent io_context from stopping
     bool verification_on;   //boolean variable to check whether the instance is not that secured by verification, used by "wss_server"
 protected:
     ws_server_base(void) = delete;  //deleted default non-parameterized constructor
     //websocket server constructor
     explicit ws_server_base(unsigned short port, std::size_t sessions_num, bool vrf)
-        : server_abstract(sessions_num,port,false), io_ctx(), tcp_acceptor(io_ctx,tcp::endpoint(tcp::v4(),port)),
-        threads_pool(sessions_num*2), ssl_ctx(nullptr), verification_on(vrf) {tcp_acceptor.cancel(); tcp_acceptor.close();}
+        : server_abstract(sessions_num,port,false), io_ctx(std::make_unique<net::io_context>()), tcp_acceptor(*io_ctx,tcp::endpoint(tcp::v4(),port)), /*server_endpoint(tcp::v4(),port),*/
+        /*threads_pool(sessions_num*2),*/ ssl_ctx(nullptr), verification_on(vrf)/*, work(io_ctx.get_executor())*/ {tcp_acceptor.cancel(); tcp_acceptor.close();}
     //websocket secure server constructor
     explicit ws_server_base(ssl::context& ssl_context, unsigned short port, std::size_t sessions_num, bool vrf)
-        : server_abstract(sessions_num,port,true), io_ctx(), ssl_ctx(&ssl_context),
-        tcp_acceptor(io_ctx,tcp::endpoint(tcp::v4(),port)), threads_pool(sessions_num*2), verification_on(vrf) {tcp_acceptor.cancel(); tcp_acceptor.close();}
+        : server_abstract(sessions_num,port,true), io_ctx(std::make_unique<net::io_context>()), ssl_ctx(&ssl_context), /*work(io_ctx.get_executor()),*/
+        tcp_acceptor(*io_ctx,tcp::endpoint(tcp::v4(),port)),/*server_endpoint(tcp::v4(),port),*/ /*threads_pool(sessions_num*2),*/ verification_on(vrf) {tcp_acceptor.cancel(); tcp_acceptor.close();}
     virtual ~ws_server_base(void) = default;   //stop all threads in pool
     void accept_connection(void) override;
 public:
@@ -145,8 +157,8 @@ public:
     bool check_inbox(int) override;
     bool check_session(int) override;
     void close_session(int) override;
-    static void lock_resources(ws_server_base*);
-    static void unlock_resources(ws_server_base*);
+    // static void lock_resources(ws_server_base*);
+    // static void unlock_resources(ws_server_base*);
 };
 /************************************************************************************************************************
 * Class Name: ws_server_base
@@ -173,33 +185,41 @@ public:
     ws_server(const ws_server&) = delete; //delete copy constructor
     ws_server& operator=(const ws_server&) = delete;  //delete copy assignment operator
     /*====================== Class creation functions - "Singleton Design Pattern" ====================================*/
-    inline static ws_server* Create(unsigned short port, std::size_t sessions_num)    //create the instance function
+    inline static ws_server* GetInstance(unsigned short port, std::size_t sessions_num)    //create the instance function
     {
+        std::lock_guard<std::mutex> lock(ws_server::access_mutex);
         if(server_instance == nullptr)
             server_instance = new ws_server(port,sessions_num);
         return server_instance;
     }
-    inline static ws_server* GetInstance(void)    //get the instance
-    {
-        return server_instance;
-    }
+    // inline static ws_server* GetInstance(void)    //get the instance
+    // {
+    //     return server_instance;
+    // }
     inline static void Destroy(ws_server* inst_ptr)  //destroy the instance function
     {
-        inst_ptr->io_ctx.stop();
-        inst_ptr->io_ctx.reset();
-        if(inst_ptr->tcp_acceptor.is_open())
-        {
-            inst_ptr->tcp_acceptor.cancel();
-            inst_ptr->tcp_acceptor.close(); //closed if open
-        }
-        inst_ptr->threads_pool.stop();
-        delete inst_ptr;
-        inst_ptr = nullptr;
+        std::lock_guard<std::mutex> lock(ws_server::access_mutex);
+        // //inst_ptr->work.reset();
+        // if(!inst_ptr->io_ctx.stopped())   //stop context
+        //     inst_ptr->io_ctx.stop();
+        // if(inst_ptr->tcp_acceptor.is_open())
+        // {
+        //     inst_ptr->tcp_acceptor.cancel();
+        //     inst_ptr->tcp_acceptor.close(); //closed if open
+        // }
+        // if(inst_ptr->threads_pool.get())    //if object still exists and not deleted
+        // {
+        //     inst_ptr->threads_pool->stop();
+        //     inst_ptr->threads_pool.reset(); //delete/destory threads pool
+        // }
+        inst_ptr->stop(); //stop server, call stop
+        delete server_instance;
+        server_instance = nullptr;
     }
     /*================================================================================================================*/
-public:
-    friend void ws_server_base::lock_resources(ws_server_base*); // Grant access to the static function
-    friend void ws_server_base::unlock_resources(ws_server_base*); // Grant access to the static function
+// public:
+//     friend void ws_server_base::lock_resources(ws_server_base*); // Grant access to the static function
+//     friend void ws_server_base::unlock_resources(ws_server_base*); // Grant access to the static function
 };
 /************************************************************************************************************************
 * Class Name: ws_server_base
@@ -236,7 +256,7 @@ public:
     wss_server(const wss_server&) = delete; //delete copy constructor
     wss_server& operator=(const wss_server&) = delete;  //delete copy assignment operator
     /*====================== Class creation functions - "Singleton Design Pattern" ====================================*/
-    inline static wss_server* Create(unsigned short port, std::size_t sessions_num,const std::string key,
+    inline static wss_server* GetInstance(unsigned short port, std::size_t sessions_num,const std::string key,
         const std::string certificate,const std::string CA_certificate)//create the instance function
     {
         std::lock_guard<std::mutex> lock(access_mutex);
@@ -244,31 +264,45 @@ public:
             server_instance = new wss_server(port,sessions_num,key,certificate,CA_certificate);
         return server_instance;
     }
-    inline static wss_server* Create(unsigned short port, std::size_t sessions_num,const std::string key)//create the instance function
+    inline static wss_server* GetInstance(unsigned short port, std::size_t sessions_num,const std::string key)//create the instance function
     {
         std::lock_guard<std::mutex> lock(access_mutex2);
         if(server_instance2 == nullptr)
             server_instance2 = new wss_server(port,sessions_num,key);
         return server_instance2;
     }
-    inline static wss_server* GetInstance(bool verfication_is_on)    //get the instance
-    {
-        if(verfication_is_on)
-            return server_instance;
-        else
-            return server_instance2;
-    }
+    // inline static wss_server* GetInstance(bool verfication_is_on)    //get the instance
+    // {
+    //     if(verfication_is_on)
+    //         return server_instance;
+    //     else
+    //         return server_instance2;
+    // }
     inline static void Destroy(wss_server* inst_ptr)  //destroy the instance function
     {
-        inst_ptr->io_ctx.stop();
-        inst_ptr->io_ctx.reset();
-        if(inst_ptr->tcp_acceptor.is_open())
-        {
-            inst_ptr->tcp_acceptor.cancel();
-            inst_ptr->tcp_acceptor.close(); //closed if open
-        }
-        inst_ptr->threads_pool.stop();
-        if(inst_ptr->verification_on)
+        //Safety for multithreads if block code
+        bool is_verification_on = inst_ptr->verification_on;
+        if(is_verification_on)
+            wss_server::access_mutex.lock();
+        else
+            wss_server::access_mutex2.lock();
+        // //inst_ptr->work.reset();
+        // if(!inst_ptr->io_ctx.stopped())   //stop context
+        //     inst_ptr->io_ctx.stop();
+        // // inst_ptr->io_ctx.stop();
+        // // inst_ptr->io_ctx.reset();
+        // if(inst_ptr->tcp_acceptor.is_open())
+        // {
+        //     inst_ptr->tcp_acceptor.cancel();
+        //     inst_ptr->tcp_acceptor.close(); //closed if open
+        // }
+        // if(inst_ptr->threads_pool.get())    //if object still exists and not deleted
+        // {
+        //     inst_ptr->threads_pool->stop();
+        //     inst_ptr->threads_pool.reset(); //delete/destory threads pool
+        // }
+        inst_ptr->stop();   //stop server, call stop
+        if(is_verification_on)
         {
             delete server_instance;
             server_instance = nullptr;
@@ -278,11 +312,15 @@ public:
             delete server_instance2;
             server_instance2 = nullptr;
         }
+        if(is_verification_on)
+            wss_server::access_mutex.unlock();
+        else
+            wss_server::access_mutex2.unlock();
     }
     /*================================================================================================================*/
-public:
-    friend void ws_server_base::lock_resources(ws_server_base*); // Grant access to the static function
-    friend void ws_server_base::unlock_resources(ws_server_base*); // Grant access to the static function
+// public:
+//     friend void ws_server_base::lock_resources(ws_server_base*); // Grant access to the static function
+//     friend void ws_server_base::unlock_resources(ws_server_base*); // Grant access to the static function
 };
 /************************************************************************************************************************
 * Class Name: ws_server_base
@@ -317,13 +355,18 @@ protected:
     virtual void stop(int) = 0;   //for ungracefull disconnection
     virtual void receive_message(void) = 0; //receive messages asynchronously
     virtual void write_message(void) = 0;   //send messages asynchronously
-public:
+//public:
     virtual void start(void) = 0;   //to start session connection by server
     virtual void stop(void) = 0;    //for gracefull disconnection
     virtual std::vector<unsigned char> read_message(void) = 0;  //read messages, add to queue
     virtual void send_message(const std::vector<unsigned char>&) =0; //send messages, get from queue
     virtual bool check_inbox(void) = 0;  //check session inbox
     virtual bool check_session(void) = 0;//check if session is running
+public:
+//     friend class server_abstract;   //friend class to access private/protected members
+    friend class ws_server_base;    //friend class to access private/protected members
+    friend class ws_server;    //friend class to access private/protected members
+    friend class wss_server;    //friend class to access private/protected members
 };
 /************************************************************************************************************************
 * Class Name: ws_server_base
@@ -350,13 +393,18 @@ protected:
     virtual void receive_message(void) = 0;
     virtual void write_message(void) = 0;
     virtual void stop(int) = 0;
-public:
+//public:
     virtual void start(void) = 0;
     virtual void stop(void) = 0;
     std::vector<unsigned char> read_message(void) override;
     void send_message(const std::vector<unsigned char>&) override;
     bool check_inbox(void) override;
     bool check_session(void) override;
+public:
+//     friend class server_abstract;   //friend class to access private/protected members
+     friend class ws_server_base;    //friend class to access private/protected members
+     friend class ws_server;    //friend class to access private/protected members
+     friend class wss_server;    //friend class to access private/protected members
 };
 /************************************************************************************************************************
 * Class Name: ws_server_base
@@ -377,15 +425,25 @@ protected:
     void stop(int) override;
     void receive_message(void) override;
     void write_message(void) override;
+    void start(void) override;
+    void stop(void) override;
 public:
     ws_session(void) = delete;  //deleted default non-parameterized constructor
     explicit ws_session(int id,std::atomic<std::size_t>& sessions_counter,std::unordered_set<int>& ids_set,
         std::unordered_map<int,session_hndl>& sessions_map,std::mutex& gmtx,net::io_context& context,tcp::socket&& socket)
         : ws_session_base(id,sessions_counter,ids_set,sessions_map,gmtx,context), stream(std::move(socket)) {}
     ~ws_session(void) = default;
+//public:
+
+    // static ws_session* create_ws_session(int, std::atomic<std::size_t>&,std::unordered_set<int>&,
+    //     std::unordered_map<int, std::weak_ptr<session_abstract>>&, std::mutex&, net::io_context&,tcp::socket&&);
 public:
-    void start(void) override;
-    void stop(void) override;
+    //friend class server_abstract;   //friend class to access private/protected members
+    friend class ws_server_base;    //friend class to access private/protected members
+    friend class ws_server;    //friend class to access private/protected members
+    friend class wss_server;    //friend class to access private/protected members
+    // friend std::shared_ptr<ws_session> ws_session::create_ws_session(int, std::atomic<std::size_t>&,std::unordered_set<int>&,
+    //         std::unordered_map<int, std::weak_ptr<session_abstract>>&, std::mutex&, net::io_context&,tcp::socket&&);
 };
 /************************************************************************************************************************
 * Class Name: ws_server_base
@@ -406,13 +464,23 @@ protected:
     void stop(int) override;
     void receive_message(void) override;
     void write_message(void) override;
+    void start(void) override;
+    void stop(void) override;
 public:
     wss_session(void) = delete;  //deleted default non-parameterized constructor
     explicit wss_session(int id,std::atomic<std::size_t>& sessions_counter,std::unordered_set<int>& ids_set,
         std::unordered_map<int,session_hndl>& sessions_map,std::mutex& gmtx,net::io_context& context,tcp::socket&& socket,ssl::context& ssl_ctx)
         : ws_session_base(id,sessions_counter,ids_set,sessions_map,gmtx,context), stream(std::move(socket),ssl_ctx) {}
     ~wss_session(void) = default;
+//public:
+
+    // static std::shared_ptr<wss_session> create_wss_session(int, std::atomic<std::size_t>&,std::unordered_set<int>&,
+    //     std::unordered_map<int, std::weak_ptr<session_abstract>>&, std::mutex&, net::io_context&,tcp::socket&&, ssl::context&);
 public:
-    void start(void) override;
-    void stop(void) override;
+    //friend class server_abstract;   //friend class to access private/protected members
+    friend class ws_server_base;    //friend class to access private/protected members
+    friend class ws_server;    //friend class to access private/protected members
+    friend class wss_server;    //friend class to access private/protected members
+    // friend std::shared_ptr<wss_session> wss_session::create_wss_session(int, std::atomic<std::size_t>&,std::unordered_set<int>&,
+    //         std::unordered_map<int, std::weak_ptr<session_abstract>>&, std::mutex&, net::io_context&,tcp::socket&&, ssl::context&);
 };
