@@ -89,7 +89,7 @@ protected:
     std::mutex session_establishment_mutex; //Mutex to prevent racing when creating new sessions
     std::mutex g_sessions;   //mutex to protect shared access to map of IDs and sessions
     std::size_t max_sessions;   //max allowed sessions num
-    std::atomic<std::size_t> session_count; //counter for sessions running
+    std::atomic<std::size_t> session_count = 0; //counter for sessions running
     std::atomic<bool> server_running = false;   //boolean to show if server is running or not
     std::unordered_set<int> sessions_ids;   //to track available IDs for sessions
     std::unordered_map<int,session_hndl> sessions;  //hash map for all sessions to control

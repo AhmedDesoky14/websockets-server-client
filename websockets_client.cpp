@@ -90,6 +90,7 @@ void ws_client_base::send_message(const std::vector<unsigned char>& message)
 ************************************************************************************************************************/
 inline bool ws_client_base::check_connection(void)
 {
+    //std::this_thread::sleep_for(std::chrono::milliseconds(50));    //delay before checking
     return ongoing_connection.load();
 }
 /************************************************************************************************************************
@@ -132,6 +133,7 @@ inline bool ws_client_base::check_inbox(void)
 ************************************************************************************************************************/
 inline bool ws_client_base::check_failed_connection(void)
 {
+    //std::this_thread::sleep_for(std::chrono::milliseconds(50));    //delay before checking
     return self_disconnected.load();
 }
 /************************************************************************************************************************
@@ -163,6 +165,11 @@ void ws_client::receive_message(void)
     stream->async_read(*buffer,net::bind_executor(*strand,[buffer,self_object](beast::error_code errcode,std::size_t bytes_received) mutable //mutable lambda expression
     {
         if(errcode == boost::beast::websocket::error::closed)
+        {
+            self_object->disconnect(0);   //stop session
+            return;
+        }
+        else if(errcode == boost::asio::error::eof)
         {
             self_object->disconnect(0);   //stop session
             return;
@@ -225,6 +232,11 @@ void ws_client::write_message(void)
             self_object->disconnect(0);   //stop session
             return;
         }
+        else if(errcode == boost::asio::error::eof)
+        {
+            self_object->disconnect(0);   //stop session
+            return;
+        }
         else if(errcode) //failed to send, disconnect
         {
             std::cout << "Client failed to write message: " << errcode.message() << std::endl;
@@ -252,9 +264,10 @@ void ws_client::write_message(void)
 ************************************************************************************************************************/
 void ws_client::disconnect(int code)
 {
-    // if(!ongoing_connection.load())  //if already disconnected
-    //     return; //do nothing and return
+     if(!ongoing_connection.load())  //if already disconnected
+         return; //do nothing and return
     ongoing_connection = false;
+    //std::this_thread::sleep_for(std::chrono::milliseconds(50));    //delay before closing
     //client_pool.stop();    //stop all threads
     //if(!io_ctx.stopped())   //stop context
     //io_ctx.stop();    //stop context
@@ -262,12 +275,20 @@ void ws_client::disconnect(int code)
     //std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay until ongoing operations stop
     if(code == 0)
     {
-        try{stream->close(websocket::close_code::normal);}
+        try
+        {
+            if (stream->is_open())
+                stream->close(websocket::close_code::normal);
+        }
         catch(...){} //suppress exceptions, object is deleted afterwards
     }
     else if(code == -1)
     {
-        try{stream->close(websocket::close_code::protocol_error);}
+        try
+        {
+            if (stream->is_open())
+                stream->close(websocket::close_code::protocol_error);
+        }
         catch(...){} //suppress exceptions, object is deleted afterwards
     }
     //client_pool->join();    //join threads until they finish
@@ -277,7 +298,7 @@ void ws_client::disconnect(int code)
     read_messages_queue.clear();
     send_messages_queue.clear();
     self_disconnected = true;
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay before ending
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));    //delay before ending
     std::cout << "client disconnected ungracefully" << std::endl;
 }
 /************************************************************************************************************************
@@ -369,7 +390,7 @@ bool ws_client::connect(std::string& ip_address, unsigned short port)
         std::this_thread::sleep_for(std::chrono::seconds(1));
     if(!ongoing_connection.load())  //if connection is not successfull
     {
-        self_object->disconnect(-1); //disconnect if not disconnected
+        self_object->disconnect(); //disconnect if not disconnected and reset
         std::cout << "client connection timeout" << std::endl;
         return false;
     }
@@ -396,7 +417,12 @@ void ws_client::disconnect(void)
     if(!ongoing_connection.load())  //if already disconnected
         return; //do nothing and return
     ongoing_connection = false;
-    try{stream->close(websocket::close_code::normal);}
+    //std::this_thread::sleep_for(std::chrono::milliseconds(50));    //delay before closing
+    try
+    {
+        if (stream->is_open())
+            stream->close(websocket::close_code::normal);
+    }
     catch(...){} //suppress exceptions, object is deleted afterwards
     //client_pool.stop();    //stop all threads
     // read_messages_queue.clear();
@@ -426,7 +452,7 @@ void ws_client::disconnect(void)
     read_messages_queue.clear();
     send_messages_queue.clear();
     self_disconnected = false;
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay before ending
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));    //delay before ending
     std::cout << "client disconnected gracefully" << std::endl;
 }
 /************************************************************************************************************************
@@ -469,7 +495,7 @@ void ws_client::reset(void)
     //client_pool.reset();    //destory/delete threads pool object
     //io_ctx->restart();   //restart io_context for futher operations
     self_disconnected = false;  //reset the boolean
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay before reseting
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));    //delay before reseting
 }
 /************************************************************************************************************************
 * Function Name: accept_connection
@@ -500,6 +526,11 @@ void wss_client::receive_message(void)
     stream->async_read(*buffer,net::bind_executor(*strand,[buffer,self_object](beast::error_code errcode,std::size_t bytes_received) mutable //mutable lambda expression
     {
         if(errcode == boost::beast::websocket::error::closed)
+        {
+            self_object->disconnect(0);   //stop session
+            return;
+        }
+        else if(errcode == boost::asio::error::eof)
         {
             self_object->disconnect(0);   //stop session
             return;
@@ -562,6 +593,11 @@ void wss_client::write_message(void)
             self_object->disconnect(0);   //stop session
             return;
         }
+        else if(errcode == boost::asio::error::eof)
+        {
+            self_object->disconnect(0);   //stop session
+            return;
+        }
         else if(errcode) //failed to send, disconnect
         {
             std::cout << "Client failed to write message: " << errcode.message() << std::endl;
@@ -589,9 +625,10 @@ void wss_client::write_message(void)
 ************************************************************************************************************************/
 void wss_client::disconnect(int code)
 {
-    // if(!ongoing_connection.load())  //if already disconnected
-    //     return; //do nothing and return
+    if(!ongoing_connection.load())  //if already disconnected
+         return; //do nothing and return
     ongoing_connection = false;
+    //std::this_thread::sleep_for(std::chrono::milliseconds(50));    //delay before closing
     //client_pool.stop();    //stop all threads
     // read_messages_queue.clear();
     // send_messages_queue.clear();
@@ -602,12 +639,20 @@ void wss_client::disconnect(int code)
     //std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay until ongoing operations stop
     if(code == 0)
     {
-        try{stream->close(websocket::close_code::normal);}
+        try
+        {
+            if (stream->is_open())
+                stream->close(websocket::close_code::normal);
+        }
         catch(...){} //suppress exceptions, object is deleted afterwards
     }
     else if(code == -1)
     {
-        try{stream->close(websocket::close_code::protocol_error);}
+        try
+        {
+            if (stream->is_open())
+                stream->close(websocket::close_code::protocol_error);
+        }
         catch(...){} //suppress exceptions, object is deleted afterwards
     }
     //client_pool->join();    //join threads until they finish
@@ -617,7 +662,7 @@ void wss_client::disconnect(int code)
     read_messages_queue.clear();
     send_messages_queue.clear();
     self_disconnected = true;
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay before ending
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));    //delay before ending
     std::cout << "client disconnected ungracefully" << std::endl;
 }
 /************************************************************************************************************************
@@ -729,7 +774,7 @@ bool wss_client::connect(std::string& ip_address, unsigned short port)
         std::this_thread::sleep_for(std::chrono::seconds(1));
     if(!ongoing_connection.load())  //if connection is not successfull
     {
-        self_object->disconnect(-1); //disconnect if not disconnected
+        self_object->disconnect(); //disconnect if not disconnected and reset
         std::cout << "client connection timeout" << std::endl;
         return false;
     }
@@ -900,7 +945,12 @@ void wss_client::disconnect(void)
     if(!ongoing_connection.load())  //if already disconnected
         return; //do nothing and return
     ongoing_connection = false;
-    try{stream->close(websocket::close_code::normal);}
+    //std::this_thread::sleep_for(std::chrono::milliseconds(50));    //delay before closing
+    try
+    {
+        if (stream->is_open())
+            stream->close(websocket::close_code::normal);
+    }
     catch(...){} //suppress exceptions, object is deleted afterwards
     //client_pool.stop();    //stop all threads
     // read_messages_queue.clear();
@@ -932,7 +982,7 @@ void wss_client::disconnect(void)
     read_messages_queue.clear();
     send_messages_queue.clear();
     self_disconnected = false;
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay before ending
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));    //delay before ending
     std::cout << "client disconnected gracefully" << std::endl;
 }
 /************************************************************************************************************************
@@ -975,5 +1025,5 @@ void wss_client::reset(void)
     //client_pool.reset();    //destory/delete threads pool object
     //io_ctx->restart();   //restart io_context for futher operations
     self_disconnected = false;  //reset the boolean
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay before reseting
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));    //delay before reseting
 }
