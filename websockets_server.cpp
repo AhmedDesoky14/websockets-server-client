@@ -4,77 +4,40 @@
  *  Authors: Ahmed Desoky
  *	Date: 18/1/2025
  *	*********************************************************************************************************************
- *	Description: Source file for websockets servers and sessions handling
- *
- *
+ *	Description: Source file for websockets servers and sessions handling.
+ *               This file contains all member functions implementations
+ *               of all WebSocket and WebSocket Secure base and derived classes.
+ *               Please read header file documentation for more understanding.
  ***********************************************************************************************************************/
 /************************************************************************************************************************
  *                     							   INCLUDES
  ***********************************************************************************************************************/
 #include "websockets_server.h"
-
 ws_server* ws_server::server_instance = nullptr; // Initialize static pointer to nullptr
 std::mutex ws_server::access_mutex;             // Initialize static mutex
-
 wss_server* wss_server::server_instance = nullptr; // Initialize static pointer to nullptr
 std::mutex wss_server::access_mutex;             // Initialize static mutex
-
 wss_server* wss_server::server_instance2 = nullptr;  // Initialize static pointer to nullptr
 std::mutex wss_server::access_mutex2;             // Initialize static mutex
-
-
-constexpr int connection_timeout = 3;  //in seconds
-
-
-
-
+constexpr int connection_timeout = 4;  //in seconds
 /***********************************************************************************************************************
  *                     					    FUNCTIONS DEFINTITIONS
  ***********************************************************************************************************************/
-
-void ws_server_base::lock_resources(ws_server_base* instance_ptr)
-{
-    //Safety for multithreads if block code
-    if(dynamic_cast<wss_server*>(instance_ptr)) //if the instance calling this function is "wss_server" (the ptr can be cast to it)
-    {
-        if(instance_ptr->verification_on) //if it's the one secured by verification
-            wss_server::access_mutex.lock();
-        else    //if it's the one not secured by verification
-            wss_server::access_mutex2.lock();
-    }
-    else    //if the instance calling this function is "ws_server"
-        ws_server::access_mutex.lock();
-}
-
-void ws_server_base::unlock_resources(ws_server_base* instance_ptr)
-{
-    //Safety for multithreads if block code
-    if(dynamic_cast<wss_server*>(instance_ptr)) //if the instance calling this function is "wss_server" (the ptr can be cast to it)
-    {
-        if(instance_ptr->verification_on) //if it's the one secured by verification
-            wss_server::access_mutex.unlock();
-        else    //if it's the one not secured by verification
-            wss_server::access_mutex2.unlock();
-    }
-    else    //if the instance calling this function is "ws_server"
-        ws_server::access_mutex.unlock();
-}
-
-
 /************************************************************************************************************************
 * Function Name: accept_connection
 * Class name: ws_server_base
 * Access: Protected
-* Specifiers:
-* Running Thread: Mainthread -> A pool thread
+* Specifiers: NONE
+* Running Thread: Caller thread for first time only then by Pool thread
 * Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
+* Reentrancy: Reentrant
+* Expected  Exception: No
 * Parameters (in): NONE
 * Parameters (out): NONE
 * Return value: NONE
-* Description:
-*
-*
+* Description: Internal function called at first by "ws_server_base::start". Then called each time by its async handler.
+*              to accept new connection. As long as server is running.
+*              access to the async handler is secured by "session_establishment_mutex" mutex.
 ************************************************************************************************************************/
 void ws_server_base::accept_connection(void)
 {
@@ -84,15 +47,15 @@ void ws_server_base::accept_connection(void)
     session_establishment_mutex.lock();
     tcp_acceptor.async_accept([this](boost::system::error_code errcode,tcp::socket socket)
     {
-        if(!server_running.load())  //if server is not running. accept no more connections
-            return;
-        ws_server_base::lock_resources(this);
-        if(errcode)
+        if(errcode == boost::asio::error::operation_aborted)    //operation canceled
         {
             socket.close();
-            std::cout << "A session failed to start" << std::endl;
-            //ws_server_base::unlock_resources(this);
-            //session_establishment_mutex.unlock();
+            session_establishment_mutex.unlock();
+            return;
+        }
+        else if(errcode)    //any other error
+        {
+            socket.close();
         }
         else if(session_count < max_sessions)
         {
@@ -105,10 +68,10 @@ void ws_server_base::accept_connection(void)
             std::shared_ptr<session_abstract> new_session;  //shared_ptr to the new session
             if(secure) //if server is secure
                 new_session = std::make_shared<wss_session>(new_session_id,session_count,sessions_ids,sessions,
-                    g_sessions,io_ctx,std::move(socket),*ssl_ctx);
+                    g_sessions,*io_ctx,std::move(socket),*ssl_ctx);
             else    //not secure
                 new_session = std::make_shared<ws_session>(new_session_id,session_count,sessions_ids,sessions,
-                    g_sessions,io_ctx,std::move(socket));
+                    g_sessions,*io_ctx,std::move(socket));
             sessions.insert({new_session_id,new_session});  //push the session handler and id to the map to allow its handle
             g_sessions.unlock();
             try{new_session->start();}   //start session. to handle "start" exceptions running in this thread
@@ -120,183 +83,104 @@ void ws_server_base::accept_connection(void)
                 g_sessions.unlock();
                 session_count.fetch_sub(1);//thread-safely decrement the session counter at server class, locked by static mutex
             }
-            //ws_server_base::unlock_resources(this);
-            //session_establishment_mutex.unlock();
         }
         else
         {
             socket.close();
-            std::cout << "A session rejected" << std::endl;
-            //ws_server_base::unlock_resources(this);
-            //session_establishment_mutex.unlock();
         }
-        ws_server_base::unlock_resources(this);
-        session_establishment_mutex.unlock();
+        session_establishment_mutex.unlock();   //if locked,
         accept_connection();  // Continue accepting new connections
     });
-
-    //current connection being in establishment finishes then to the next new establishment
-    // if(!server_running.load())  //if server is not running. accept no more connections
-    //     return
-    //         session_establishment_mutex.lock();
-    // tcp_acceptor.async_accept([this](boost::system::error_code errcode,tcp::socket socket)
-    //                           {
-    //                               if(errcode)
-    //                               {
-    //                                   socket.close();
-    //                                   session_establishment_mutex.unlock();
-    //                               }
-    //                               else if(session_count < max_sessions)
-    //                               {
-
-    //                                   // auto& new_io_context = sessions_contexts[next_session_context_index()];
-    //                                   // net::io_context new_io_context;
-    //                                   // auto new_socket = tcp::socket(new_io_context, socket);
-    //                                   // net::executor_work_guard<net::io_context::executor_type> work_guard(new_io_context);
-    //                                   // new_io_context.run();
-    //                                   // threads_pool.emplace_back([&,this]
-    //                                   // {
-    //                                   //     (std::make_shared<wss_session_base>(io_ctx,std::move(socket),ssl_ctx))->start();
-    //                                   // });
-    //                                   //Push session metadata and handler to the map, then pop them from the session object at exit
-    //                                   session_count.fetch_add(1); //thread-safely increment the session counter, locked by mutex
-    //                                   //++session_count;
-    //                                   std::cout << "current session: " << session_count.load() << std::endl;
-    //                                   g_sessions.lock();
-    //                                   //int new_session_id = Get_ID();
-    //                                   auto min_id_iter = std::min_element(sessions_ids.begin(),sessions_ids.end());
-    //                                   int new_session_id = *min_id_iter;  //get the min available id
-    //                                   sessions_ids.erase(min_id_iter);
-    //                                   //auto new_session = std::make_shared<wss_session_base>(std::move(socket),ssl_ctx,session_count,sessions_ids,sessions,new_session_id);
-    //                                   // auto new_session = std::make_shared<wss_session>(std::move(socket),ssl_ctx,session_count,sessions_ids,sessions,new_session_id,io_ctx);
-    //                                   auto new_session = std::make_shared<wss_session>(new_session_id,session_count,sessions_ids,sessions,
-    //                                       g_sessions,io_ctx,std::move(socket),*ssl_ctx);
-
-    //                                   sessions.insert({new_session_id,new_session});  //push the session handler and id to the map to allow its handle
-    //                                   g_sessions.unlock();
-    //                                   try{new_session->start();}   //start session. to handle "start" exceptions running in this thread
-    //                                   catch(...)  //in case of exception and error, remove inserted metadata of the session
-    //                                   {
-    //                                       g_sessions.lock();
-    //                                       sessions.erase(new_session_id); //erase the session handler from the map
-    //                                       sessions_ids.insert(new_session_id); //insert the id back to the container to release the id
-    //                                       //Release_ID(new_session_id); //release id back to the set to be used later
-    //                                       g_sessions.unlock();
-    //                                       session_count.fetch_sub(1);//thread-safely decrement the session counter at server class, locked by static mutex
-    //                                       std::cout << "current sessions: " << session_count.load() << std::endl;
-    //                                   }
-    //                                   //new_session->start();   //start session
-    //                                   //connection started, unlock the mutex
-    //                                   //std::cout << "ongoing sessions: " << session_count.load() << std::endl;
-    //                                   session_establishment_mutex.unlock();
-
-    //                                   // auto session = std::make_shared<wss_session_base>(std::move(socket), ssl_ctx);
-    //                                   // net::post(threads_pool, [this,session]()
-    //                                   // {
-    //                                   //     sessions_count.fetch_add(1);    //thread-safely increment the session counter
-    //                                   //     session->start();
-    //                                   //     sessions_count.fetch_sub(1);    //thread-safely decrement the session counter
-    //                                   // });
-    //                               }
-    //                               else
-    //                               {
-    //                                   socket.close();
-    //                                   std::cout << "session rejected" << std::endl;
-    //                                   session_establishment_mutex.unlock();
-    //                               }
-    //                               //if there's error. ignore the connection session
-    //                               accept_connection();  // Continue accepting new connections
-    //                           });
 }
 /************************************************************************************************************************
-* Function Name:
-* Class name:
-* Access:
-* Specifiers:
-* Running Thread: Mainthread
-* Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
-* Parameters (in):
-* Parameters (out):
-* Return value:
-* Description:
-*
-*
+* Function Name: start
+* Class name: ws_server_base
+* Access: Public
+* Specifiers: NONE
+* Running Thread: Caller thread
+* Sync/Async: Synchronous
+* Reentrancy: Reentrant
+* Expected  Exception: No
+* Parameters (in): NONE
+* Parameters (out): NONE
+* Return value: NONE
+* Description: User function to start server and start server worker threads.
+*              shared access to the function from many threads is secured by "start_mutex" mutex. For thread safety
 ************************************************************************************************************************/
 void ws_server_base::start(void)
 {
-    ws_server_base::lock_resources(this);
+    std::lock_guard<std::mutex> lock(start_mutex);
     if(server_running)
-    {
-        ws_server_base::unlock_resources(this);
         return; //already running
-    }
     server_running = true;
-    tcp_acceptor.listen();
-    this->accept_connection();
-    std::cout << "Server started" << std::endl;
     for(std::size_t k=0;k<max_sessions;++k) //initialize IDs
         sessions_ids.insert(k+1);
-    //creating number of threads equal to max allowed number of sessions x2 and run the io_context in all these threads
-    //this will make the server handle different sessions in different threads concurrently, each session 2threads, 1read/1write
+    tcp_acceptor = tcp::acceptor(*io_ctx,tcp::endpoint(tcp::v4(),server_port));  //initialze the tcp_accpetor
+    tcp_acceptor.listen();
+    this->accept_connection();
+    threads_pool = std::make_unique<net::thread_pool>(max_sessions*2);
     for (std::size_t i=0; i < max_sessions*2; ++i)  //here check after stopping and starting again
-        net::post(threads_pool, [this](){io_ctx.run();});
-    ws_server_base::unlock_resources(this);
-    //this is to make sure that the mutex is unlocked to accept new connections. if and only if the mutex is not locked
-    if(!session_establishment_mutex.try_lock()) //if not locked, lock then unlock
-        session_establishment_mutex.unlock();
-    else
-        session_establishment_mutex.unlock();   //if locked, unlock
+        net::post(*threads_pool, [this](){io_ctx->run();});
     return;
 }
 /************************************************************************************************************************
-* Function Name:
-* Class name:
-* Access:
-* Specifiers:
-* Running Thread: Mainthread
-* Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
-* Parameters (in):
-* Parameters (out):
-* Return value:
-* Description:
-*
-*
+* Function Name: stop
+* Class name: ws_server_base
+* Access: Public
+* Specifiers: NONE
+* Running Thread: Caller thread
+* Sync/Async: Synchronous
+* Reentrancy: Reentrant
+* Expected  Exception: No
+* Parameters (in): NONE
+* Parameters (out): NONE
+* Return value: NONE
+* Description: User function to stop server and release are resources and stop all working threads.
+*              shared access to the function from many threads is secured by "stop_mutex" mutex. For thread safety
 ************************************************************************************************************************/
 void ws_server_base::stop(void)
 {
-    ws_server_base::lock_resources(this);
+    std::lock_guard<std::mutex> lock(stop_mutex);
     if(!server_running)
-    {
-        ws_server_base::unlock_resources(this);
         return;
-    }
     server_running = false; //stop server
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));    //delay before stopping
     tcp_acceptor.cancel();  //cancel all tcp connections
     for(auto& sess_iter : sessions) //close all running sessions
+    {
+        if(this->sessions.size() == 0)
+            break;
         this->close_session(sess_iter.first);
-    io_ctx.stop();  //stop context
+    }
+    tcp_acceptor.close();   //close port, all connections will be closed automatically
+    io_ctx->stop();  //make sure to stop context
+    threads_pool->join();    //join threads until it ends
+    threads_pool.reset();   //destory/delete threads pool object
     io_ctx.reset();
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));//sleep until all handlers are executed and threads are ended
-    std::cout << "Server stoped gracefully" << std::endl;
-    ws_server_base::unlock_resources(this);
-    return;
+    io_ctx = std::make_unique<net::io_context>();
+    sessions.clear();   //clear threads pool
+    sessions_ids.clear();
+    session_count = 0;
+    if(!session_establishment_mutex.try_lock()) //unlock this mutex if it is locked, assure its unlocked
+        session_establishment_mutex.unlock();
+    else
+        session_establishment_mutex.unlock();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));    //delay before ending
 }
 /************************************************************************************************************************
-* Function Name:
-* Class name:
-* Access:
-* Specifiers:
-* Running Thread: Mainthread
-* Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
-* Parameters (in):
-* Parameters (out):
-* Return value:
-* Description:
-*
-*
+* Function Name: is_serving
+* Class name: ws_server_base
+* Access: Public
+* Specifiers: inline
+* Running Thread: Caller thread
+* Sync/Async: Synchronous
+* Reentrancy: Reentrant
+* Expected  Exception: No
+* Parameters (in): NONE
+* Parameters (out): server serving status
+* Return value: server serving status as boolean
+* Description: User function to check whether server is serving clients and there are ongoing sessions or not
+*              Accessing atomic variabe for thread safety.
 ************************************************************************************************************************/
 inline bool ws_server_base::is_serving(void)
 {
@@ -305,19 +189,19 @@ inline bool ws_server_base::is_serving(void)
     return false;
 }
 /************************************************************************************************************************
-* Function Name:
-* Class name:
-* Access:
-* Specifiers:
-* Running Thread: Mainthread
-* Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
-* Parameters (in):
-* Parameters (out):
-* Return value:
-* Description:
-*
-*
+* Function Name: is_running
+* Class name: ws_server_base
+* Access: Public
+* Specifiers: inline
+* Running Thread: Caller thread
+* Sync/Async: Synchronous
+* Reentrancy: Reentrant
+* Expected  Exception: No
+* Parameters (in): NONE
+* Parameters (out): server running status
+* Return value: server running status as boolean
+* Description: User function to check whether server is running or not
+*              Accessing atomic variabe for thread safety.
 ************************************************************************************************************************/
 inline bool ws_server_base::is_running(void)
 {
@@ -326,182 +210,163 @@ inline bool ws_server_base::is_running(void)
     return false;
 }
 /************************************************************************************************************************
-* Function Name:
-* Class name:
-* Access:
-* Specifiers:
-* Running Thread: Mainthread
-* Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
-* Parameters (in):
-* Parameters (out):
-* Return value:
-* Description:
-*
-*
+* Function Name: sessions_count
+* Class name: ws_server_base
+* Access: Public
+* Specifiers: inline
+* Running Thread: Caller thread
+* Sync/Async: Synchronous
+* Reentrancy: Reentrant
+* Expected  Exception: No
+* Parameters (in): NONE
+* Parameters (out): number of ongoing sessions/clients being served
+* Return value: number of ongoing sessions/clients being served as integer
+* Description: User function to get number of ongoing sessions by server
+*              Accessing atomic variabe for thread safety.
 ************************************************************************************************************************/
 inline int ws_server_base::sessions_count(void)
 {
     return static_cast<int>(session_count.load());
 }
 /************************************************************************************************************************
-* Function Name:
-* Class name:
-* Access:
-* Specifiers:
-* Running Thread: Mainthread
-* Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
-* Parameters (in):
-* Parameters (out):
-* Return value:
-* Description:
-*
-*
+* Function Name: send_message
+* Class name: ws_server_base
+* Access: Public
+* Specifiers: NONE
+* Running Thread: Caller thread
+* Sync/Async: Synchronous
+* Reentrancy: Reentrant
+* Expected  Exception: No
+* Parameters (in): session id to send the message to
+*                  message to be sent as const reference to vector of unsigned characters
+* Parameters (out): Operation status whether successful or not
+* Return value: Operation status whether successful or not as boolean.
+* Description: User function to send a message to specific session by the server
+*              shared access to the function from many threads is secured by "send_message_mutex" mutex. For thread safety
 ************************************************************************************************************************/
 bool ws_server_base::send_message(int id, const std::vector<unsigned char>& message)
 {
-    ws_server_base::lock_resources(this);
-    auto session_iter = sessions.find(id);
+    std::lock_guard<std::mutex> lock(send_message_mutex);
+    auto session_iter = sessions.find(id);  //get session handler from sessions map container
     if(session_iter == sessions.end())   //id not found, not running
-    {
-        ws_server_base::unlock_resources(this);
         return false;
-    }
     auto session_handler = session_iter->second;    //stored weak_ptr to the session
     session_handler.lock()->send_message(message);
-    ws_server_base::unlock_resources(this);
     return true;
 }
 /************************************************************************************************************************
-* Function Name:
-* Class name:
-* Access:
-* Specifiers:
-* Running Thread: Mainthread
-* Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
-* Parameters (in):
-* Parameters (out):
-* Return value:
-* Description:
-*
-*
+* Function Name: read_message
+* Class name: ws_server_base
+* Access: Public
+* Specifiers: NONE
+* Running Thread: Caller thread
+* Sync/Async: Synchronous
+* Reentrancy: Reentrant
+* Expected  Exception: No
+* Parameters (in): session id to read the message from its queue
+* Parameters (out): message read, empty if read failed
+* Return value: message read as vector of unsigned characters, empty if read failed
+* Description: User function to read messages from specific session's queue by the server
+*              shared access to the function from many threads is secured by "read_message_mutex" mutex. For thread safety
 ************************************************************************************************************************/
 std::vector<unsigned char> ws_server_base::read_message(int id)
 {
-    ws_server_base::lock_resources(this);
+    std::lock_guard<std::mutex> lock(read_message_mutex);
     std::vector<unsigned char> msg;
-    auto session_iter = sessions.find(id);
+    auto session_iter = sessions.find(id);  //get session handler from sessions map container
     if(session_iter == sessions.end())   //id not found, not running
-    {
-        ws_server_base::unlock_resources(this);
         return msg; //empty message
-    }
     auto session_handler = session_iter->second;    //stored weak_ptr to the session
     msg = session_handler.lock()->read_message();
-    ws_server_base::unlock_resources(this);
     return msg;
 }
 /************************************************************************************************************************
-* Function Name:
-* Class name:
-* Access:
-* Specifiers:
-* Running Thread: Mainthread
-* Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
-* Parameters (in):
-* Parameters (out):
-* Return value:
-* Description:
-*
-*
+* Function Name: check_inbox
+* Class name: ws_server_base
+* Access: Public
+* Specifiers: NONE
+* Running Thread: Caller thread
+* Sync/Async: Synchronous
+* Reentrancy: Reentrant
+* Expected  Exception: No
+* Parameters (in): session id to check its inbox/queue
+* Parameters (out): whether there are messages to read or not
+* Return value: whether there are messages to read or not as boolean
+* Description: User function to check the read queue/inbox of specific session by server
+*              shared access to the function from many threads is secured by "check_inbox_mutex" mutex. For thread safety
 ************************************************************************************************************************/
 bool ws_server_base::check_inbox(int id)
 {
-    ws_server_base::lock_resources(this);
-    auto session_iter = sessions.find(id);
+    std::lock_guard<std::mutex> lock(check_inbox_mutex);
+    auto session_iter = sessions.find(id);  //get session handler from sessions map container
     if(session_iter == sessions.end())   //id not found, not running
-    {
-        ws_server_base::unlock_resources(this);
         return false;   //id not found or not running
-    }
     auto session_handler = session_iter->second;    //stored weak_ptr to the session
     if(!session_handler.lock()->check_inbox()) //if inbox empty
-    {
-        ws_server_base::unlock_resources(this);
         return false;   //inbox empty
-    }
-    ws_server_base::unlock_resources(this);
     return true;
 }
 /************************************************************************************************************************
-* Function Name:
-* Class name:
-* Access:
-* Specifiers:
-* Running Thread: Mainthread
-* Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
-* Parameters (in):
-* Parameters (out):
-* Return value:
-* Description:
-*
-*
+* Function Name: check_session
+* Class name: ws_server_base
+* Access: Public
+* Specifiers: NONE
+* Running Thread: Caller thread
+* Sync/Async: Synchronous
+* Reentrancy: Reentrant
+* Expected  Exception: No
+* Parameters (in): session id to check its status
+* Parameters (out): whether the session is ongoing or not
+* Return value: whether the session is ongoing or not as boolean
+* Description: User function to check the status of specific session if it's ongoing or not by server
+*              shared access to the function from many threads is secured by "session_check_mutex" mutex. For thread safety
 ************************************************************************************************************************/
 bool ws_server_base::check_session(int id)
 {
-    ws_server_base::lock_resources(this);
-    auto session_iter = sessions.find(id);
-    ws_server_base::unlock_resources(this);
+    std::lock_guard<std::mutex> lock(session_check_mutex);
+    auto session_iter = sessions.find(id);  //get session handler from sessions map container
     if(session_iter == sessions.end())   //id not found, not running
         return false;
     return true;
 }
 /************************************************************************************************************************
-* Function Name:
-* Class name:
-* Access:
-* Specifiers:
-* Running Thread: Mainthread
-* Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
-* Parameters (in):
-* Parameters (out):
-* Return value:
-* Description:
-*
-*
+* Function Name: close_session
+* Class name: ws_server_base
+* Access: Public
+* Specifiers: NONE
+* Running Thread: Caller thread
+* Sync/Async: Synchronous
+* Reentrancy: Reentrant
+* Expected  Exception: No
+* Parameters (in): session id to close
+* Parameters (out): NONE
+* Return value: NONE
+* Description: User function to close a specific session by server using its ID
+*              shared access to the function from many threads is secured by "session_close_mutex" mutex. For thread safety
 ************************************************************************************************************************/
 void ws_server_base::close_session(int id)
 {
-    ws_server_base::lock_resources(this);
-    auto session_iter = sessions.find(id);
+    std::lock_guard<std::mutex> lock(session_close_mutex);
+    auto session_iter = sessions.find(id);  //get session handler from sessions map container
     if(session_iter == sessions.end())   //id not found, not running
-    {
-        ws_server_base::unlock_resources(this);
         return;
-    }
     auto session_handler = session_iter->second;    //stored weak_ptr to the session
     session_handler.lock()->stop();
-    ws_server_base::unlock_resources(this);
 }
 /************************************************************************************************************************
-* Function Name:
-* Class name:
-* Access:
-* Specifiers:
-* Running Thread: Mainthread
-* Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
-* Parameters (in):
-* Parameters (out):
-* Return value:
-* Description:
-*
-*
+* Function Name: read_message
+* Class name: ws_session_base
+* Access: Protected - Accessed only by server classes
+* Specifiers: NONE
+* Running Thread: Pool thread
+* Sync/Async: Synchronous
+* Reentrancy: Reentrant
+* Expected  Exception: No
+* Parameters (in): NONE
+* Parameters (out): message from the session read queue
+* Return value: message from the session read queue as vector of unsigned characters, empty if queue is empty
+* Description: Protected function to read message from sessin by server
+*              shared variables and racing to the function is secured by "read_mutex" mutex.
 ************************************************************************************************************************/
 std::vector<unsigned char> ws_session_base::read_message(void)
 {
@@ -512,45 +377,45 @@ std::vector<unsigned char> ws_session_base::read_message(void)
     message = read_messages_queue.front();
     read_messages_queue.pop_front();
     read_mutex.unlock();
-    //std::cout << "message received by server: " << std::string(message.begin(),message.end()) << ", by session num: " << session_id << std::endl;
     return message;
 }
 /************************************************************************************************************************
-* Function Name:
-* Class name:
-* Access:
-* Specifiers:
-* Running Thread: Mainthread
-* Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
-* Parameters (in):
-* Parameters (out):
-* Return value:
-* Description:
-*
-*
+* Function Name: send_message
+* Class name: ws_session_base
+* Access: Protected - Accessed only by server classes
+* Specifiers: NONE
+* Running Thread: Pool thread
+* Sync/Async: Synchronous
+* Reentrancy: Reentrant
+* Expected  Exception: No
+* Parameters (in): message to be sent as const reference to vector of unsigned characters
+* Parameters (out): NONE
+* Return value: NONE
+* Description: Protected function to send message to a sessin by server
+*              shared variables and racing to the function is secured by "send_mutex" mutex.
 ************************************************************************************************************************/
 void ws_session_base::send_message(const std::vector<unsigned char>& message)
 {
     send_mutex.lock();
     send_messages_queue.push_back(std::move(message));
     send_mutex.unlock();
+    this->write_message();  //call write message and give the write order
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));    //delay before ending and writing
     return;
 }
 /************************************************************************************************************************
-* Function Name:
-* Class name:
-* Access:
-* Specifiers:
-* Running Thread: Mainthread
-* Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
-* Parameters (in):
-* Parameters (out):
-* Return value:
-* Description:
-*
-*
+* Function Name: check_inbox
+* Class name: ws_session_base
+* Access: Protected - Accessed only by server classes
+* Specifiers: inline
+* Running Thread: Pool thread
+* Sync/Async: Synchronous
+* Reentrancy: Reentrant
+* Expected  Exception: No
+* Parameters (in): NONE
+* Parameters (out): read queue/inbox status whether there are messages to read or empty
+* Return value: read queue/inbox status as boolean whether there are messages to read or empty
+* Description: Protected function to check read queue of a session by server
 ************************************************************************************************************************/
 inline bool ws_session_base::check_inbox(void)
 {
@@ -559,38 +424,41 @@ inline bool ws_session_base::check_inbox(void)
     return false;
 }
 /************************************************************************************************************************
-* Function Name:
-* Class name:
-* Access:
-* Specifiers:
-* Running Thread: Mainthread
-* Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
-* Parameters (in):
-* Parameters (out):
-* Return value:
-* Description:
-*
-*
+* Function Name: check_session
+* Class name: ws_session_base
+* Access: Protected - Accessed only by server classes
+* Specifiers: inline
+* Running Thread: Pool thread
+* Sync/Async: Synchronous
+* Reentrancy: Reentrant
+* Expected  Exception: No
+* Parameters (in): NONE
+* Parameters (out): session status whether its ongoing or not
+* Return value: session status as boolean whether its ongoing or not
+* Description: Protected function to check session statu by server whether ongoing or not.
+*              Accessing atomic variabe for thread safety.
 ************************************************************************************************************************/
 inline bool ws_session_base::check_session(void)
 {
     return ongoing_session.load();
 }
 /************************************************************************************************************************
-* Function Name:
-* Class name:
-* Access:
-* Specifiers:
-* Running Thread: Mainthread
-* Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
-* Parameters (in):
-* Parameters (out):
-* Return value:
-* Description:
-*
-*
+* Function Name: start
+* Class name: ws_session
+* Access: Protected - Accessed only by server classes
+* Specifiers: NONE
+* Running Thread: Pool thread
+* Sync/Async: Synchronous
+* Reentrancy: Reentrant
+* Expected  Exception: No
+* Parameters (in): NONE
+* Parameters (out): NONE
+* Return value: NONE
+* Description: Protected function to start a new session by server. session with no TLS/SSL underlayer.
+*              server starts the new session as new client tries to connect to the server.
+*              if the session is started successfully, it starts receiving operations and update its status.
+*              if session failed to start, it stops and disconnects the client and delete its metadata
+*              metadata: session id, session's handler in sessions map, decrement sessions counter by 1.
 ************************************************************************************************************************/
 void ws_session::start(void)
 {
@@ -606,32 +474,13 @@ void ws_session::start(void)
     {
         if(errcode)
         {
-            std::cout << "Server, failed WebSocket handshake, num: "<< self_object->session_id << std::endl;
-            try
-            {   /*close stream, due to protocol error*/
-                self_object->stream.close(websocket::close_code::protocol_error);
-                self_object->ongoing_session = true;
-                self_object->stop(1);   //set "ongoing_session" to true to allow session closing
-                return;
-            }
-            catch(...)
-            {
-                self_object->ongoing_session = true;
-                self_object->stop(1);   //set "ongoing_session" to true to allow session closing
-                return;
-            }
+            self_object->ongoing_session = true;
+            self_object->stop(-1);   //set "ongoing_session" to true to allow session closing
+            return;
         }
         // All functions are successfull
-        std::cout << "Server acquired new connection, session started, num: "<< self_object->session_id << std::endl;
-        std::cout << "current connected sessions: " << self_object->session_count.load() << std::endl;
         self_object->ongoing_session = true;
-        self_object->receive_message();
-        while(self_object->ongoing_session.load())
-        {
-            if(self_object->send_messages_queue.size() > 0) //there's a message to send
-                self_object->write_message();
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));    //sleep for 100ms
-        }
+        self_object->receive_message(); //trigger receive message call
     });
     //Boost's default handshake timeout connection for websocket is 30seconds
     int i = 0;  //timeout check loop
@@ -639,31 +488,30 @@ void ws_session::start(void)
         std::this_thread::sleep_for(std::chrono::seconds(1));
     if(!ongoing_session.load())  //if connection is not successfull
     {
-        std::cout << "session timeout, num: " << session_id << std::endl;
-        self_object->stop(1);   //stop if not stopped
+        self_object->stop();   //stop if not stopped
         return;
     }
 }
 /************************************************************************************************************************
-* Function Name:
-* Class name:
-* Access:
-* Specifiers:
-* Running Thread: Mainthread
-* Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
-* Parameters (in):
-* Parameters (out):
-* Return value:
-* Description:
-*
-*
+* Function Name: stop(1)
+* Class name: ws_session
+* Access: Protected - Accessed only by server classes
+* Specifiers: NONE
+* Running Thread: Pool thread
+* Sync/Async: Synchronous
+* Reentrancy: Reentrant
+* Expected  Exception: No
+* Parameters (in): NONE
+* Parameters (out): NONE
+* Return value: NONE
+* Description: Protected function to stop thesession by server willingly. session with no TLS/SSL underlayer.
+*              It stops and disconnects the client and delete its metadata
+*              metadata: session id, session's handler in sessions map, decrement sessions counter by 1.
 ************************************************************************************************************************/
 void ws_session::stop(void)
 {
     if(!ongoing_session.load()) //if session is already stopped
         return; //do nothing and return
-    std::cout << "session gracefully stopped, num: " << session_id << std::endl;
     ongoing_session = false;
     g_sessions.lock(); //shared mutex for all sessions
     sessions.erase(session_id); //erase the session handler from the map
@@ -671,59 +519,82 @@ void ws_session::stop(void)
     g_sessions.unlock();
     session_count.fetch_sub(1); //thread-safely decrement the session counter at server class, locked by static mutex
     try
-    {stream.close(websocket::close_code::normal);}
-    catch(...) {} //suppress exception
+    {
+        if (stream.is_open())
+            stream.close(websocket::close_code::normal);
+    }
+    catch(...) {} //suppress exceptions
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));    //delay before ending
 }
 /************************************************************************************************************************
-* Function Name:
-* Class name:
-* Access:
-* Specifiers:
-* Running Thread: Mainthread
-* Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
-* Parameters (in):
-* Parameters (out):
-* Return value:
-* Description:
-*
-*
+* Function Name: stop(2)
+* Class name: ws_session
+* Access: Protected - Accessed only by server classes
+* Specifiers: NONE
+* Running Thread: Pool thread
+* Sync/Async: Synchronous
+* Reentrancy: Reentrant
+* Expected  Exception: No
+* Parameters (in): NONE
+* Parameters (out): NONE
+* Return value: NONE
+* Description: Protected function to stop the session by session itself in error cases. session with no TLS/SSL underlayer.
+*              It stops and disconnects the client and delete its metadata
+*              metadata: session id, session's handler in sessions map, decrement sessions counter by 1.
 ************************************************************************************************************************/
-void ws_session::stop(int)
+void ws_session::stop(int code)
 {
     if(!ongoing_session.load()) //if session is already stopped
         return; //do nothing and return
-    std::cout << "session ungracefully stopped, num: " << session_id << std::endl;
     ongoing_session = false;
     g_sessions.lock(); //shared mutex for all sessions
     sessions.erase(session_id); //erase the session handler from the map
     sessions_ids.insert(session_id);
     g_sessions.unlock();
     session_count.fetch_sub(1);//thread-safely decrement the session counter at server class, locked by static mutex
-    try
-    {stream.close(websocket::close_code::protocol_error);}
-    catch(...){}  //suppress exception
+    if(code == 0)
+    {
+        try
+        {
+            if (stream.is_open())
+                stream.close(websocket::close_code::normal);
+        }
+        catch(...) {} //suppress exception
+    }
+    else if(code == -1)
+    {
+        try
+        {
+            if (stream.is_open())
+                stream.close(websocket::close_code::protocol_error);
+        }
+        catch(...) {} //suppress exception
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));    //delay before ending
 }
 /************************************************************************************************************************
-* Function Name:
-* Class name:
-* Access:
-* Specifiers:
-* Running Thread: Mainthread
+* Function Name: receive_message
+* Class name: ws_session
+* Access: Protected - Accessed only by server classes
+* Specifiers: NONE
+* Running Thread: Pool thread
 * Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
-* Parameters (in):
-* Parameters (out):
-* Return value:
-* Description:
-*
-*
+* Reentrancy: Reentrant
+* Expected  Exception: No
+* Parameters (in): NONE
+* Parameters (out): NONE
+* Return value: NONE
+* Description: Protected function to receieve messages for the session. session with no TLS/SSL underlayer.
+*              It contains its own handler as Lambda functions called upon receiving new message then
+*              "ws_session::receive_message" is called again after handler execution.
+*              This function exits completely at session closure.
+*              Access to the queue and shared varibales is secured by "read_mutex" mutex
 ************************************************************************************************************************/
 void ws_session::receive_message(void)
 {
     if(!stream.is_open())   //if stream is closed or there's no connection
     {
-        this->stop(1);   //stop session
+        this->stop(-1);   //stop session
         return;
     }
     std::shared_ptr<beast::flat_buffer> buffer = std::make_shared<beast::flat_buffer>();
@@ -733,12 +604,17 @@ void ws_session::receive_message(void)
     {
         if(errcode == boost::beast::websocket::error::closed)
         {
-            self_object->stop();   //stop session
+            self_object->stop(0);   //stop session
+            return;
+        }
+        else if(errcode == boost::asio::error::eof)
+        {
+            self_object->stop(0);   //stop session
             return;
         }
         else if(errcode)
         {
-            self_object->stop(1);   //stop session
+            self_object->stop(-1);   //stop session
             return;
         }
         if (buffer->size() == 0) //empty buffer, receive again
@@ -752,33 +628,31 @@ void ws_session::receive_message(void)
         buffer->consume(bytes_received);   //clear the buffer
         buffer->clear();
         std::string rec_string(received_data.begin(),received_data.end());
-        //std::cout << "Server received message: " << rec_string << ", by session: " << self_object->session_id << std::endl;
-
-        //self_object->send_message(received_data);   //for testing //------------------------
-
         self_object->receive_message(); //receive again
     }));
 }
 /************************************************************************************************************************
-* Function Name:
-* Class name:
-* Access:
-* Specifiers:
-* Running Thread: Mainthread
+* Function Name: write_message
+* Class name: ws_session
+* Access: Protected - Accessed only by server classes
+* Specifiers: NONE
+* Running Thread: Pool thread
 * Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
-* Parameters (in):
-* Parameters (out):
-* Return value:
-* Description:
-*
-*
+* Reentrancy: Reentrant
+* Parameters (in): NONE
+* Expected  Exception: No
+* Parameters (out): NONE
+* Return value: NONE
+* Description: Internal Asynchronous function called after a each "ws_server_base::send_message" function call
+*              It contains its own handler as Lambda functions called upon sending the new message to handle any error occurs.
+*              Access to the queue and shared varibales is secured by "send_mutex" mutex
+*              session is not with TLS/SSL underlayer.
 ************************************************************************************************************************/
 void ws_session::write_message(void)
 {
     if(!stream.is_open())   //if stream is closed or there's no connection
     {
-        this->stop(1);   //stop session
+        this->stop(-1);   //stop session
         return;
     }
     send_mutex.lock();
@@ -792,31 +666,39 @@ void ws_session::write_message(void)
     {
         if(errcode == boost::beast::websocket::error::closed)
         {
-            self_object->stop();   //stop session
+            self_object->stop(0);   //stop session
+            return;
+        }
+        else if(errcode == boost::asio::error::eof)
+        {
+            self_object->stop(0);   //stop session
             return;
         }
         else if(errcode) //failed to send
         {
-            self_object->stop(1);   //stop session
+            self_object->stop(-1);   //stop session
             return;
         }
         boost::ignore_unused(bytes_sent_dummy); //ignore the dummy parameter
     }));
 }
 /************************************************************************************************************************
-* Function Name:
-* Class name:
-* Access:
-* Specifiers:
-* Running Thread: Mainthread
-* Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
-* Parameters (in):
-* Parameters (out):
-* Return value:
-* Description:
-*
-*
+* Function Name: start
+* Class name: wss_session
+* Access: Protected - Accessed only by server classes
+* Specifiers: NONE
+* Running Thread: Pool thread
+* Sync/Async: Synchronous
+* Reentrancy: Reentrant
+* Expected  Exception: No
+* Parameters (in): NONE
+* Parameters (out): NONE
+* Return value: NONE
+* Description: Protected function to start a new session by server. session with TLS/SSL underlayer.
+*              server starts the new session as new client tries to connect to the server.
+*              if the session is started successfully, it starts receiving operations and update its status.
+*              if session failed to start, it stops and disconnects the client and delete its metadata
+*              metadata: session id, session's handler in sessions map, decrement sessions counter by 1.
 ************************************************************************************************************************/
 void wss_session::start(void)
 {
@@ -827,20 +709,9 @@ void wss_session::start(void)
     {
         if(errcode)
         {
-            std::cout << "Server, failed SSL handshake, num: "<< self_object->session_id << std::endl;
-            try
-            {   /*close stream, due to protocol error*/
-                self_object->stream.close(websocket::close_code::protocol_error);
-                self_object->ongoing_session = true;
-                self_object->stop(1);   //set "ongoing_session" to true to allow session closing
-                return;
-            }
-            catch(...)
-            {
-                self_object->ongoing_session = true;
-                self_object->stop(1);   //set "ongoing_session" to true to allow session closing
-                return;
-            }
+            self_object->ongoing_session = true;
+            self_object->stop(-1);   //set "ongoing_session" to true to allow session closing
+            return;
         }
         //set the suggested timeout settings for the websocket as the server
         self_object->stream.set_option(websocket::stream_base::timeout::suggested(beast::role_type::server));
@@ -852,32 +723,14 @@ void wss_session::start(void)
         {
             if(errcode2)
             {
-                std::cout << "Server, failed WebSocket handshake, num: "<< self_object->session_id << std::endl;
-                try
-                {   /*close stream, due to protocol error*/
-                    self_object->stream.close(websocket::close_code::protocol_error);
-                    self_object->ongoing_session = true;
-                    self_object->stop(1);//set "ongoing_session" to true to allow session closing
-                    return;
-                }
-                catch(...)
-                {
-                    self_object->ongoing_session = true;
-                    self_object->stop(1);//set "ongoing_session" to true to allow session closing
-                    return;
-                }
+                self_object->ongoing_session = true;
+                self_object->stop(-1);//set "ongoing_session" to true to allow session closing
+                return;
             }
             // All functions are successfull
-            std::cout << "Server acquired new connection, session started, num: "<< self_object->session_id << std::endl;
-            std::cout << "current connected sessions: " << self_object->session_count.load() << std::endl;
             self_object->ongoing_session = true;
-            self_object->receive_message();
-            while(self_object->ongoing_session.load())
-            {
-                if(self_object->send_messages_queue.size() > 0) //there's a message to send
-                    self_object->write_message();
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));    //sleep for 100ms
-            }
+            //all function are successfull
+            self_object->receive_message(); //trigger receive message call
         });
     });
     //Boost's default handshake timeout connection for websocket is 30seconds
@@ -886,31 +739,30 @@ void wss_session::start(void)
         std::this_thread::sleep_for(std::chrono::seconds(1));
     if(!ongoing_session.load())  //if connection is not successfull
     {
-        std::cout << "session timeout, num: " << session_id << std::endl;
-        self_object->stop(1);   //stop if not stopped
+        self_object->stop();   //stop if not stopped
         return;
     }
 }
 /************************************************************************************************************************
-* Function Name:
-* Class name:
-* Access:
-* Specifiers:
-* Running Thread: Mainthread
-* Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
-* Parameters (in):
-* Parameters (out):
-* Return value:
-* Description:
-*
-*
+* Function Name: stop(1)
+* Class name: wss_session
+* Access: Protected - Accessed only by server classes
+* Specifiers: NONE
+* Running Thread: Pool thread
+* Sync/Async: Synchronous
+* Reentrancy: Reentrant
+* Expected  Exception: No
+* Parameters (in): NONE
+* Parameters (out): NONE
+* Return value: NONE
+* Description: Protected function to stop thesession by server willingly. session with TLS/SSL underlayer.
+*              It stops and disconnects the client and delete its metadata
+*              metadata: session id, session's handler in sessions map, decrement sessions counter by 1.
 ************************************************************************************************************************/
 void wss_session::stop(void)
 {
     if(!ongoing_session.load()) //if session is already stopped
         return; //do nothing and return
-    std::cout << "session gracefully stopped, num: " << session_id << std::endl;
     ongoing_session = false;
     g_sessions.lock(); //static mutex for all sessions
     sessions.erase(session_id); //erase the session handler from the map
@@ -918,59 +770,82 @@ void wss_session::stop(void)
     g_sessions.unlock();
     session_count.fetch_sub(1);//thread-safely decrement the session counter at server class, locked by static mutex
     try
-    {stream.close(websocket::close_code::normal);}
+    {
+        if (stream.is_open())
+            stream.close(websocket::close_code::normal);
+    }
     catch(...) {} //suppress exception
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));    //delay before ending
 }
 /************************************************************************************************************************
-* Function Name:
-* Class name:
-* Access:
-* Specifiers:
-* Running Thread: Mainthread
-* Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
-* Parameters (in):
-* Parameters (out):
-* Return value:
-* Description:
-*
-*
+* Function Name: stop(2)
+* Class name: wss_session
+* Access: Protected - Accessed only by server classes
+* Specifiers: NONE
+* Running Thread: Pool thread
+* Sync/Async: Synchronous
+* Reentrancy: Reentrant
+* Expected  Exception: No
+* Parameters (in): NONE
+* Parameters (out): NONE
+* Return value: NONE
+* Description: Protected function to stop the session by session itself in error cases. session with TLS/SSL underlayer.
+*              It stops and disconnects the client and delete its metadata
+*              metadata: session id, session's handler in sessions map, decrement sessions counter by 1.
 ************************************************************************************************************************/
-void wss_session::stop(int)
+void wss_session::stop(int code)
 {
     if(!ongoing_session.load()) //if session is already stopped
         return; //do nothing and return
-    std::cout << "session ungracefully stopped, num: " << session_id << std::endl;
     ongoing_session = false;
     g_sessions.lock(); //static mutex for all sessions
     sessions.erase(session_id); //erase the session handler from the map
     sessions_ids.insert(session_id);
     g_sessions.unlock();
     session_count.fetch_sub(1);//thread-safely decrement the session counter at server class, locked by static mutex
-    try
-    {stream.close(websocket::close_code::protocol_error);}
-    catch(...) {} //suppress exception
+    if(code == 0)
+    {
+        try
+        {
+            if (stream.is_open())
+                stream.close(websocket::close_code::normal);
+        }
+        catch(...) {} //suppress exception
+    }
+    else if(code == -1)
+    {
+        try
+        {
+            if (stream.is_open())
+                stream.close(websocket::close_code::protocol_error);
+        }
+        catch(...) {} //suppress exception
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));    //delay before ending
 }
 /************************************************************************************************************************
-* Function Name:
-* Class name:
-* Access:
-* Specifiers:
-* Running Thread: Mainthread
+* Function Name: receive_message
+* Class name: wss_session
+* Access: Protected - Accessed only by server classes
+* Specifiers: NONE
+* Running Thread: Pool thread
 * Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
-* Parameters (in):
-* Parameters (out):
-* Return value:
-* Description:
-*
-*
+* Reentrancy: Reentrant
+* Expected  Exception: No
+* Parameters (in): NONE
+* Parameters (out): NONE
+* Return value: NONE
+* Description: Protected function to receieve messages for the session. session with TLS/SSL underlayer.
+*              It contains its own handler as Lambda functions called upon receiving new message then
+*              "ws_session::receive_message" is called again after handler execution.
+*              This function exits completely at session closure.
+*              Access to the queue and shared varibales is secured by "read_mutex" mutex
 ************************************************************************************************************************/
 void wss_session::receive_message(void)
 {
     if(!stream.is_open())   //if stream is closed or there's no connection
     {
-        this->stop(1);   //stop session
+        this->stop(-1);   //stop session
         return;
     }
     std::shared_ptr<beast::flat_buffer> buffer = std::make_shared<beast::flat_buffer>();
@@ -980,12 +855,17 @@ void wss_session::receive_message(void)
     {
         if(errcode == boost::beast::websocket::error::closed)
         {
-            self_object->stop();   //stop session
+            self_object->stop(0);   //stop session
+            return;
+        }
+        else if(errcode == boost::asio::error::eof)
+        {
+            self_object->stop(0);   //stop session
             return;
         }
         else if(errcode)
         {
-            self_object->stop(1);   //stop session
+            self_object->stop(-1);   //stop session
             return;
         }
         if (buffer->size() == 0) //empty buffer, receive again
@@ -999,33 +879,31 @@ void wss_session::receive_message(void)
         buffer->consume(bytes_received);   //clear the buffer
         buffer->clear();
         std::string rec_string(received_data.begin(),received_data.end());
-        //std::cout << "Server received message: " << rec_string << ", by session: " << self_object->session_id << std::endl;
-
-        //self_object->send_message(received_data);   //for testing //------------------------
-
         self_object->receive_message(); //receive again
     }));
 }
 /************************************************************************************************************************
-* Function Name:
-* Class name:
-* Access:
-* Specifiers:
-* Running Thread: Mainthread
+* Function Name: write_message
+* Class name: wss_session
+* Access: Protected - Accessed only by server classes
+* Specifiers: NONE
+* Running Thread: Pool thread
 * Sync/Async: Asynchronous
-* Reentrancy: Non-reentrant
-* Parameters (in):
-* Parameters (out):
-* Return value:
-* Description:
-*
-*
+* Reentrancy: Reentrant
+* Parameters (in): NONE
+* Expected  Exception: No
+* Parameters (out): NONE
+* Return value: NONE
+* Description: Internal Asynchronous function called after a each "ws_server_base::send_message" function call
+*              It contains its own handler as Lambda functions called upon sending the new message to handle any error occurs.
+*              Access to the queue and shared varibales is secured by "send_mutex" mutex.
+*              session is with TLS/SSL underlayer.
 ************************************************************************************************************************/
 void wss_session::write_message(void)
 {
     if(!stream.is_open())   //if stream is closed or there's no connection
     {
-        this->stop(1);   //stop session
+        this->stop(-1);   //stop session
         return;
     }
     send_mutex.lock();
@@ -1039,15 +917,19 @@ void wss_session::write_message(void)
     {
         if(errcode == boost::beast::websocket::error::closed)
         {
-            self_object->stop();   //stop session
+            self_object->stop(0);   //stop session
+            return;
+        }
+        else if(errcode == boost::asio::error::eof)
+        {
+            self_object->stop(0);   //stop session
             return;
         }
         else if(errcode) //failed to send
         {
-            self_object->stop(1);   //stop session
+            self_object->stop(-1);   //stop session
             return;
         }
         boost::ignore_unused(bytes_sent_dummy); //ignore the dummy parameter
     }));
 }
-
