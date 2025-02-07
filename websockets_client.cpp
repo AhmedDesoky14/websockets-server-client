@@ -29,7 +29,7 @@ constexpr int connection_timeout = 4;  //in seconds
 * Parameters (out): read message if there's one in the queue or empty message
 * Return value: vector of unsigned char (message)
 * Description: User function to read messages received and stored in the queue
-*              access to the queue and shared varibales is secured by "read_mutex" mutex
+*              access to the queue and shared variables is secured by "read_mutex" mutex
 ************************************************************************************************************************/
 std::vector<unsigned char> ws_client_base::read_message(void)
 {
@@ -78,7 +78,7 @@ void ws_client_base::send_message(const std::vector<unsigned char>& message)
 * Parameters (in): NONE
 * Parameters (out): Client's connection status
 * Return value: Client's connection status as boolean
-* Description: User function to check if client is connected or not. accessing atomic variabe for thread safety.
+* Description: User function to check if client is connected or not. accessing atomic variable for thread safety.
 ************************************************************************************************************************/
 inline bool ws_client_base::check_connection(void)
 {
@@ -120,8 +120,8 @@ inline bool ws_client_base::check_inbox(void)
 *              A failure is considered in the following cases:
 *              - server closed the connection
 *              - client's ongoing connection failed.
-*              # In these cases "client_abstract::reset" function must be called before any further calls or operations.
-*              Accessing atomic variabe for thread safety.
+*              # In these cases "client_abstract::reset" function is called automatically at first new connect call.
+*              Accessing atomic variable for thread safety.
 ************************************************************************************************************************/
 inline bool ws_client_base::check_failed_connection(void)
 {
@@ -143,7 +143,7 @@ inline bool ws_client_base::check_failed_connection(void)
 *              It contains its own handler as Lambda functions called upon receiving new message then
 *              "ws_client::receive_message" is called again after handler execution.
 *              This function exits completely at connection closure.
-*              Access to the queue and shared varibales is secured by "read_mutex" mutex
+*              Access to the queue and shared variables is secured by "read_mutex" mutex
 ************************************************************************************************************************/
 void ws_client::receive_message(void)
 {
@@ -200,7 +200,7 @@ void ws_client::receive_message(void)
 * Return value: NONE
 * Description: Internal Asynchronous function called after a each "ws_client_base::send_message" function call
 *              It contains its own handler as Lambda functions called upon sending the new message to handle any error occurs.
-*              Access to the queue and shared varibales is secured by "send_mutex" mutex
+*              Access to the queue and shared variables is secured by "send_mutex" mutex
 ************************************************************************************************************************/
 void ws_client::write_message(void)
 {
@@ -249,8 +249,8 @@ void ws_client::write_message(void)
 * Parameters (out): NONE
 * Return value: NONE
 * Description: Internal function called by all member functions to disconnect and release resources.
-*              upon any connection failure. After that, "client_abstract::reset" function must be called before
-*              any other function. Accessing atomic variabe for thread safety.
+*              upon any connection failure. After that, "client_abstract::reset" function is called automatically at first new connect call.
+*              any other function. Accessing atomic variable for thread safety.
 ************************************************************************************************************************/
 void ws_client::disconnect(int code)
 {
@@ -297,8 +297,7 @@ void ws_client::disconnect(int code)
 * Return value: connection status as boolean
 * Description: User function to connect to a host server. It tries to connect, if its timeout (30 seconds by default)
 *              passed it will reset connection and release resources and return false indicating failed connection.
-*              If connection is successful, it returns true. It's recommended to call "client_abstract::reset" upon
-*              failure. but, first check failure using "ws_client_base::check_failed_connection" function
+*              If connection is successful, it returns true.
 ************************************************************************************************************************/
 bool ws_client::connect(std::string& ip_address, unsigned short port)
 {
@@ -384,7 +383,7 @@ bool ws_client::connect(std::string& ip_address, unsigned short port)
 * Parameters (in): NONE
 * Parameters (out): NONE
 * Return value: NONE
-* Description: User function called to disconnect and release all resources. Accessing atomic variabe for thread safety.
+* Description: User function called to disconnect and release all resources. Accessing atomic variable for thread safety.
 ************************************************************************************************************************/
 void ws_client::disconnect(void)
 {
@@ -426,9 +425,8 @@ void ws_client::disconnect(void)
 * Parameters (out): NONE
 * Return value: NONE
 * Description: User function called to clear all resources and reset the client to be ready for another connection.
-*              Called only upon ungracefully failed connection. read "ws_client::disconnect(1)" function description.
-*              Before calling this function please check failure and call "ws_client_base::check_failed_connection" function.
-*              Accessing atomic variabe for thread safety.
+*              Called only upon ungracefully failed connection.
+*              Accessing atomic variable for thread safety.
 ************************************************************************************************************************/
 void ws_client::reset(void)
 {
@@ -462,7 +460,7 @@ void ws_client::reset(void)
 *              It contains its own handler as Lambda functions called upon receiving new message then
 *              "wss_client::receive_message" is called again after handler execution.
 *              This function exits completely at connection closure.
-*              Access to the queue and shared varibales is secured by "read_mutex" mutex
+*              Access to the queue and shared variables is secured by "read_mutex" mutex
 ************************************************************************************************************************/
 void wss_client::receive_message(void)
 {
@@ -519,7 +517,7 @@ void wss_client::receive_message(void)
 * Return value: NONE
 * Description: Internal Asynchronous function called after a each "ws_client_base::send_message" function call
 *              It contains its own handler as Lambda functions called upon sending the new message to handle any error occurs.
-*              Access to the queue and shared varibales is secured by "send_mutex" mutex
+*              Access to the queue and shared variables is secured by "send_mutex" mutex
 ************************************************************************************************************************/
 void wss_client::write_message(void)
 {
@@ -568,8 +566,8 @@ void wss_client::write_message(void)
 * Parameters (out): NONE
 * Return value: NONE
 * Description: Internal function called by all member functions to disconnect and release resources.
-*              upon any connection failure. After that, "client_abstract::reset" function must be called before
-*              any other function. Accessing atomic variabe for thread safety.
+*              upon any connection failure. After that, "client_abstract::reset" is called automatically at first new connect call.
+*              Accessing atomic variable for thread safety.
 ************************************************************************************************************************/
 void wss_client::disconnect(int code)
 {
@@ -616,8 +614,7 @@ void wss_client::disconnect(int code)
 * Return value: connection status as boolean
 * Description: User function to connect to a host server. It tries to connect, if its timeout (30 seconds by default)
 *              passed it will reset connection and release resources and return false indicating failed connection.
-*              If connection is successful, it returns true. It's recommended to call "client_abstract::reset" upon
-*              failure. but, first check failure using "ws_client_base::check_failed_connection" function
+*              If connection is successful, it returns true.
 ************************************************************************************************************************/
 bool wss_client::connect(std::string& ip_address, unsigned short port)
 {
@@ -720,7 +717,7 @@ bool wss_client::connect(std::string& ip_address, unsigned short port)
 * Parameters (in): NONE
 * Parameters (out): NONE
 * Return value: NONE
-* Description: User function called to disconnect and release all resources. Accessing atomic variabe for thread safety.
+* Description: User function called to disconnect and release all resources. Accessing atomic variable for thread safety.
 ************************************************************************************************************************/
 void wss_client::disconnect(void)
 {
@@ -762,9 +759,8 @@ void wss_client::disconnect(void)
 * Parameters (out): NONE
 * Return value: NONE
 * Description: User function called to clear all resources and reset the client to be ready for another connection.
-*              Called only upon ungracefully failed connection. read "wss_client::disconnect(1)" function description.
-*              Before calling this function please check failure and call "ws_client_base::check_failed_connection" function.
-*              Accessing atomic variabe for thread safety.
+*              Called only upon ungracefully failed connection.
+*              Accessing atomic variable for thread safety.
 ************************************************************************************************************************/
 void wss_client::reset(void)
 {

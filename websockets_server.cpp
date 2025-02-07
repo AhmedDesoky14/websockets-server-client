@@ -180,7 +180,7 @@ void ws_server_base::stop(void)
 * Parameters (out): server serving status
 * Return value: server serving status as boolean
 * Description: User function to check whether server is serving clients and there are ongoing sessions or not
-*              Accessing atomic variabe for thread safety.
+*              Accessing atomic variable for thread safety.
 ************************************************************************************************************************/
 inline bool ws_server_base::is_serving(void)
 {
@@ -201,7 +201,7 @@ inline bool ws_server_base::is_serving(void)
 * Parameters (out): server running status
 * Return value: server running status as boolean
 * Description: User function to check whether server is running or not
-*              Accessing atomic variabe for thread safety.
+*              Accessing atomic variable for thread safety.
 ************************************************************************************************************************/
 inline bool ws_server_base::is_running(void)
 {
@@ -222,7 +222,7 @@ inline bool ws_server_base::is_running(void)
 * Parameters (out): number of ongoing sessions/clients being served
 * Return value: number of ongoing sessions/clients being served as integer
 * Description: User function to get number of ongoing sessions by server
-*              Accessing atomic variabe for thread safety.
+*              Accessing atomic variable for thread safety.
 ************************************************************************************************************************/
 inline int ws_server_base::sessions_count(void)
 {
@@ -391,7 +391,7 @@ std::vector<unsigned char> ws_session_base::read_message(void)
 * Parameters (in): message to be sent as const reference to vector of unsigned characters
 * Parameters (out): NONE
 * Return value: NONE
-* Description: Protected function to send message to a sessin by server
+* Description: Protected function to send message to a session by server
 *              shared variables and racing to the function is secured by "send_mutex" mutex.
 ************************************************************************************************************************/
 void ws_session_base::send_message(const std::vector<unsigned char>& message)
@@ -415,7 +415,7 @@ void ws_session_base::send_message(const std::vector<unsigned char>& message)
 * Parameters (in): NONE
 * Parameters (out): read queue/inbox status whether there are messages to read or empty
 * Return value: read queue/inbox status as boolean whether there are messages to read or empty
-* Description: Protected function to check read queue of a session by server
+* Description: Protected function to check read queue of a session by server.
 ************************************************************************************************************************/
 inline bool ws_session_base::check_inbox(void)
 {
@@ -436,7 +436,7 @@ inline bool ws_session_base::check_inbox(void)
 * Parameters (out): session status whether its ongoing or not
 * Return value: session status as boolean whether its ongoing or not
 * Description: Protected function to check session statu by server whether ongoing or not.
-*              Accessing atomic variabe for thread safety.
+*              Accessing atomic variable for thread safety.
 ************************************************************************************************************************/
 inline bool ws_session_base::check_session(void)
 {
@@ -588,7 +588,7 @@ void ws_session::stop(int code)
 *              It contains its own handler as Lambda functions called upon receiving new message then
 *              "ws_session::receive_message" is called again after handler execution.
 *              This function exits completely at session closure.
-*              Access to the queue and shared varibales is secured by "read_mutex" mutex
+*              Access to the queue and shared variables is secured by "read_mutex" mutex
 ************************************************************************************************************************/
 void ws_session::receive_message(void)
 {
@@ -645,7 +645,7 @@ void ws_session::receive_message(void)
 * Return value: NONE
 * Description: Internal Asynchronous function called after a each "ws_server_base::send_message" function call
 *              It contains its own handler as Lambda functions called upon sending the new message to handle any error occurs.
-*              Access to the queue and shared varibales is secured by "send_mutex" mutex
+*              Access to the queue and shared variables is secured by "send_mutex" mutex
 *              session is not with TLS/SSL underlayer.
 ************************************************************************************************************************/
 void ws_session::write_message(void)
