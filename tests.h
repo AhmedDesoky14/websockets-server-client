@@ -264,7 +264,6 @@ TEST(WSSTESTING, ConnectDisconnectCornerCases) //Test Case #6
     ASSERT_TRUE(server_less_secure->is_running());
     EXPECT_FALSE(server_less_secure->is_serving());
     EXPECT_TRUE(client1->connect(ip,8083));
-    EXPECT_FALSE(client1->check_failed_connection());
     EXPECT_TRUE(server_less_secure->is_serving());
     EXPECT_EQ(server_less_secure->sessions_count(),1);
     EXPECT_TRUE(server_less_secure->check_session(1));
@@ -278,27 +277,20 @@ TEST(WSSTESTING, ConnectDisconnectCornerCases) //Test Case #6
     server_less_secure->stop();
     EXPECT_FALSE(server_less_secure->is_serving());
     ASSERT_FALSE(server_less_secure->is_running());
-    EXPECT_TRUE(client1->check_failed_connection());  //expect a failed ongoing connection because server stopped
-    client1->reset();   //reset connection for client1, due to failed ongoing previous connection
     EXPECT_FALSE(client2->connect(ip,8083));    //server is stopped, no connection shall be established
-    EXPECT_FALSE(client2->check_failed_connection());   //connection establishment failed, but not during an ongoing one
     wss_server::Destroy(server_less_secure);    //destroy the created server, only 1 server can be created
     server_less_secure = nullptr;
     wss_server* new_server_less_secure = wss_server::GetInstance(8085,4,server_key_file_path);  //create new server on port 8085
     EXPECT_FALSE(new_server_less_secure->is_serving()); //not started yet
     ASSERT_FALSE(new_server_less_secure->is_running());
     EXPECT_FALSE(client3->connect(ip,8085));    //server is not running
-    EXPECT_FALSE(client3->check_failed_connection());   //connection establishment failed, but not during an ongoing one
     new_server_less_secure->start();
     ASSERT_TRUE(new_server_less_secure->is_running());
     EXPECT_TRUE(client4->connect(ip,8085));
     EXPECT_TRUE(new_server_less_secure->is_serving()); //new session established
-    EXPECT_FALSE(client4->check_failed_connection());   //connection is successful
     new_server_less_secure->close_session(1);   //the last established session is id=1
     EXPECT_FALSE(new_server_less_secure->is_serving()); //session closed
     EXPECT_FALSE(client4->check_connection());  //client session is closed
-    EXPECT_TRUE(client4->check_failed_connection());    //connection closed by server
-    client4->reset();   //reset connection for client4, due to closed session during serving
     new_server_less_secure->stop();
     ASSERT_FALSE(new_server_less_secure->is_running()); //server stopped
     wss_server::Destroy(new_server_less_secure);    //destroy the created server
@@ -334,4 +326,17 @@ TEST(WSTESTING, ServerUpperLimit) //Test Case #7
     ws_server::Destroy(new_server);
     new_server = nullptr;
     server = ws_server::GetInstance(8081,4);  //bring back the old server options
+}
+/*=====================================================================================================================*/
+TEST(WSTESTING, ClientSingleConnection) //Test Case #8
+{
+    std::shared_ptr<client_abstract> client = std::make_shared<ws_client>();
+    server->start();
+    ASSERT_TRUE(server->is_running());
+    EXPECT_TRUE(client->connect(ip,8081));
+    EXPECT_TRUE(client->connect(ip,8081));
+    std::string another_ip = "192.168.1.1";
+    EXPECT_FALSE(client->connect(another_ip,8888));
+    client->disconnect();
+    EXPECT_FALSE(client->check_connection());
 }

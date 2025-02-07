@@ -88,6 +88,8 @@ using wss_stream = websocket::stream<beast::ssl_stream<tcp::socket>>; //stream t
 class client_abstract
 {
 protected:
+    unsigned short connected_port = 0;
+    std::string connected_ip;
     std::atomic<bool> ongoing_connection = false;   //atomic boolean to indetify connection status
     std::atomic<bool> self_disconnected = false;   //atomic boolean to if connection is lost during ongoing connection
     std::mutex read_mutex;      //mutex for reading buffer
@@ -100,11 +102,11 @@ protected:
     virtual void receive_message(void) = 0; //receive message from stream
     virtual void write_message(void) = 0;   //write message into stream
     virtual void disconnect(int) = 0;   //self disconnection
+    virtual bool check_failed_connection(void) = 0; //check if there's failed connection, if so, call reset
+    virtual void reset(void) = 0;   //reset option, necessary to re-initialize client if connection failed and self-disconnected
 public:
     virtual bool connect(std::string& host, unsigned short) = 0;
     virtual void disconnect(void) = 0;  //gracefull disconnection
-    virtual bool check_failed_connection(void) = 0; //check if there's failed connection, if so, call reset
-    virtual void reset(void) = 0;   //reset option, necessary to re-initialize client if connection failed and self-disconnected
     virtual std::vector<unsigned char> read_message(void) = 0;  //read message from Queue
     virtual void send_message(const std::vector<unsigned char>&) = 0; //send message to Queue
     virtual bool check_connection(void) = 0;    // check client connection
@@ -136,12 +138,12 @@ protected:
     explicit ws_client_base(void)
         : io_ctx(std::make_unique<net::io_context>()), resolver(*io_ctx), strand(std::make_unique<net::strand<net::io_context::executor_type>>(io_ctx->get_executor())) {}
     virtual ~ws_client_base(void) = default;//join threads until all finish their work
+    bool check_failed_connection(void) override;
 public:
     std::vector<unsigned char> read_message(void) override;
     void send_message(const std::vector<unsigned char>&) override;
     bool check_connection(void) override;
     bool check_inbox(void) override;
-    bool check_failed_connection(void) override;
 };
 /************************************************************************************************************************
 * Class Name: ws_client
@@ -166,12 +168,12 @@ protected:
     void receive_message(void) override;
     void write_message(void) override;
     void disconnect(int) override;
+    void reset(void) override;
 public:
     explicit ws_client(void) : ws_client_base(), stream(std::make_unique<ws_stream>(*io_ctx)) {}
     ~ws_client(void){this->disconnect();} //disconnect before destruction
     bool connect(std::string&, unsigned short) override;
     void disconnect(void) override;
-    void reset(void) override;
 };
 /************************************************************************************************************************
 * Class Name: server_abstract
@@ -201,6 +203,7 @@ protected:
     void receive_message(void) override;
     void write_message(void) override;
     void disconnect(int) override;
+    void reset(void) override;
 public:
     wss_client(void) = delete;   //default non-parameterized constructor
     explicit wss_client(const std::string key_file,const std::string certificate_file,const std::string CA_cert_file) :
@@ -218,5 +221,4 @@ public:
     ~wss_client(void){this->disconnect();} //disconnect before destruction
     bool connect(std::string&, unsigned short) override;
     void disconnect(void) override;
-    void reset(void) override;
 };

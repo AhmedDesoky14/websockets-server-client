@@ -277,6 +277,8 @@ void ws_client::disconnect(int code)
     }
     read_messages_queue.clear();
     send_messages_queue.clear();
+    connected_ip.clear();
+    connected_port = 0;
     self_disconnected = true;
     std::this_thread::sleep_for(std::chrono::milliseconds(50));    //delay before ending
 }
@@ -302,6 +304,12 @@ bool ws_client::connect(std::string& ip_address, unsigned short port)
 {
     std::string host_ip = ip_address;
     std::string host_port = std::to_string(port);
+    if(connected_ip == ip_address && connected_port == port && ongoing_connection.load() == true)
+        return true;    //if I tried to connect to already connected endpoint
+    else if(ongoing_connection.load() == true)
+        return false;   //if I tried to connect to another endpoint while I am connected to some endpoint
+    if(self_disconnected.load() == true)
+        reset();    //if previous connection failed, reset resources
     //to avoid object destroying during async operations and keep the object alive until end of the scope of "self_object" shared_ptr
     auto self_object = shared_from_this();
     resolver.async_resolve(host_ip,host_port,[host_ip,self_object](boost::system::error_code errcode, tcp::resolver::results_type result)   //resolve IP and port
@@ -360,6 +368,8 @@ bool ws_client::connect(std::string& ip_address, unsigned short port)
         self_object->disconnect(); //disconnect if not disconnected and reset
         return false;
     }
+    connected_ip = ip_address;
+    connected_port = port;
     return true;
 }
 /************************************************************************************************************************
@@ -398,6 +408,8 @@ void ws_client::disconnect(void)
     stream = std::make_unique<ws_stream>(*io_ctx);//create new stream binded to the new io_context
     read_messages_queue.clear();
     send_messages_queue.clear();
+    connected_ip.clear();
+    connected_port = 0;
     self_disconnected = false;
     std::this_thread::sleep_for(std::chrono::milliseconds(50));    //delay before ending
 }
@@ -584,6 +596,8 @@ void wss_client::disconnect(int code)
     }
     read_messages_queue.clear();
     send_messages_queue.clear();
+    connected_ip.clear();
+    connected_port = 0;
     self_disconnected = true;
     std::this_thread::sleep_for(std::chrono::milliseconds(50));    //delay before ending
 }
@@ -609,6 +623,12 @@ bool wss_client::connect(std::string& ip_address, unsigned short port)
 {
     std::string host_ip = ip_address;
     std::string host_port = std::to_string(port);
+    if(connected_ip == ip_address && connected_port == port && ongoing_connection.load() == true)
+        return true;    //if I tried to connect to already connected endpoint
+    else if(ongoing_connection.load() == true)
+        return false;   //if I tried to connect to another endpoint while I am connected to some endpoint
+    if(self_disconnected.load() == true)
+        reset();    //if previous connection failed, reset resources
     //to avoid object destroying during async operations and keep the object alive until end of the scope of "self_object" shared_ptr
     auto self_object = shared_from_this();
     resolver.async_resolve(host_ip,host_port,[host_ip,self_object](boost::system::error_code errcode, tcp::resolver::results_type result)   //resolve IP and port
@@ -684,6 +704,8 @@ bool wss_client::connect(std::string& ip_address, unsigned short port)
         self_object->disconnect(); //disconnect if not disconnected and reset
         return false;
     }
+    connected_ip = ip_address;
+    connected_port = port;
     return true;
 }
 /************************************************************************************************************************
@@ -722,6 +744,8 @@ void wss_client::disconnect(void)
     stream = std::make_unique<wss_stream>(*io_ctx,ssl_ctx);//create new stream binded to the new io_context
     read_messages_queue.clear();
     send_messages_queue.clear();
+    connected_ip.clear();
+    connected_port = 0;
     self_disconnected = false;
     std::this_thread::sleep_for(std::chrono::milliseconds(50));    //delay before ending
 }
