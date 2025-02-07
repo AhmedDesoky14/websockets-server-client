@@ -162,7 +162,7 @@ public:
 ************************************************************************************************************************/
 class ws_client : public ws_client_base, public std::enable_shared_from_this<ws_client> //to allow creating shared objects inside async handlers
 {
-protected:
+private:
     std::unique_ptr<ws_stream> stream; //I/O stream, unique pointer
 protected:
     void receive_message(void) override;
@@ -196,7 +196,7 @@ public:
 ************************************************************************************************************************/
 class wss_client : public ws_client_base, public std::enable_shared_from_this<wss_client> //to allow creating shared objects inside async handlers
 {
-protected:
+private:
     std::unique_ptr<wss_stream> stream; //I/O stream, unique pointer
     ssl::context ssl_ctx{ssl::context::tls};  //SSL context reference
     const std::string key;  //key file path
