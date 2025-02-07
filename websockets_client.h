@@ -199,6 +199,9 @@ class wss_client : public ws_client_base, public std::enable_shared_from_this<ws
 protected:
     std::unique_ptr<wss_stream> stream; //I/O stream, unique pointer
     ssl::context ssl_ctx{ssl::context::tls};  //SSL context reference
+    const std::string key;  //key file path
+    const std::string certificate;  //certificate file path
+    const std::string CA_certificate;   //Certificate Authority certificate file path
 protected:
     void receive_message(void) override;
     void write_message(void) override;
@@ -209,12 +212,16 @@ public:
     explicit wss_client(const std::string key_file,const std::string certificate_file,const std::string CA_cert_file) :
         ws_client_base()
         {
+            key = key_file;
+            certificate = certificate_file;
+            CA_certificate = CA_cert_file;
             Set_SSL_CTX(ssl_ctx,key_file,certificate_file,CA_cert_file);
             stream = std::make_unique<wss_stream>(*io_ctx,ssl_ctx);  //late initialization instead of the initialization list
         }
     explicit wss_client(const std::string key_file) :
         ws_client_base()
     {
+        key = key_file;
         Set_SSL_CTX(ssl_ctx,key_file);
         stream = std::make_unique<wss_stream>(*io_ctx,ssl_ctx);  //late initialization instead of the initialization list
     }

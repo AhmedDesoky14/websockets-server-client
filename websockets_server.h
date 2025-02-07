@@ -297,6 +297,7 @@ private:
     ssl::context ssl_ctx{ssl::context::tls};  //SSL context reference
     const std::string key;  //key file path
     const std::string certificate;  //certificate file path
+    const std::string CA_certificate;   //Certificate Authority certificate file path
 protected:
     wss_server(void) = delete;  //deleted default non-parameterized constructor
     explicit wss_server(unsigned short port, std::size_t sessions_num,
@@ -315,6 +316,9 @@ public:
         const std::string certificate,const std::string CA_certificate)//create the instance function
     {
         std::lock_guard<std::mutex> lock(access_mutex);
+        this->key = key;
+        this->certificate = certificate;
+        this->CA_certificate = CA_certificate;
         if(server_instance == nullptr)
             server_instance = new wss_server(port,sessions_num,key,certificate,CA_certificate);
         return server_instance;
@@ -322,6 +326,7 @@ public:
     inline static wss_server* GetInstance(unsigned short port, std::size_t sessions_num,const std::string key)//create the instance function
     {
         std::lock_guard<std::mutex> lock(access_mutex2);
+        this->key = key;
         if(server_instance2 == nullptr)
             server_instance2 = new wss_server(port,sessions_num,key);
         return server_instance2;
