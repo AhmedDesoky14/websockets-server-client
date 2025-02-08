@@ -19,7 +19,7 @@ wss_server* wss_server::server_instance = nullptr; // Initialize static pointer 
 std::mutex wss_server::access_mutex;             // Initialize static mutex
 wss_server* wss_server::server_instance2 = nullptr;  // Initialize static pointer to nullptr
 std::mutex wss_server::access_mutex2;             // Initialize static mutex
-constexpr int connection_timeout = 4;  //in seconds
+constexpr int connection_timeout = 30;  //in seconds
 /***********************************************************************************************************************
  *                     					    FUNCTIONS DEFINTITIONS
  ***********************************************************************************************************************/
