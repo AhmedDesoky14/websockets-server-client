@@ -398,8 +398,6 @@ protected:
     virtual bool check_session(void) = 0;//check if session is running
 public:
     friend class ws_server_base;    //friend class to access private/protected members
-    friend class ws_server;    //friend class to access private/protected members
-    friend class wss_server;    //friend class to access private/protected members
 };
 /************************************************************************************************************************
 * Class Name: ws_session_base
@@ -446,8 +444,6 @@ protected:
     bool check_session(void) override;
 public:
      friend class ws_server_base;    //friend class to access private/protected members
-     friend class ws_server;    //friend class to access private/protected members
-     friend class wss_server;    //friend class to access private/protected members
 };
 /************************************************************************************************************************
 * Class Name: ws_session
@@ -495,7 +491,6 @@ public:
 public:
     friend class ws_server_base;    //friend class to access private/protected members
     friend class ws_server;    //friend class to access private/protected members
-    friend class wss_server;    //friend class to access private/protected members
 };
 /************************************************************************************************************************
 * Class Name: wss_session
@@ -543,6 +538,5 @@ public:
     ~wss_session(void) = default;
 public:
     friend class ws_server_base;    //friend class to access private/protected members
-    friend class ws_server;    //friend class to access private/protected members
     friend class wss_server;    //friend class to access private/protected members
 };
