@@ -11,7 +11,7 @@ Providing 3 types of communications:
 I aimed for a modular and maintainable design using OOP and SOLID design principles. Also I used some design patterns, such as:
 ✅ Singleton: To limit creating more than one server instance of a specific type using a static factory method.
 ✅ Facade: To Simplify user interaction by abstracting complex WebSocket operations.
-📌 Module contains 3 parts:\n
+📌 Module contains 3 parts:
 1️⃣ Client classes: Used for client side requests and operations.
 ![Alt Text](Photos/Screenshot(140).png)
 **Client classes hierarchy**
