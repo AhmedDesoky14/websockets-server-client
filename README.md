@@ -13,13 +13,13 @@ I aimed for a modular and maintainable design using OOP and SOLID design princip
 ✅ Facade: To Simplify user interaction by abstracting complex WebSocket operations.
 📌 Module contains 3 parts:
 1️⃣ Client classes: Used for client side requests and operations.
-![Alt Text](Photos/Screenshot (140).png)
+![Alt Text](Photos/Screenshot(140).png)
 **Client classes hierarchy**
 
 2️⃣ Server classes: For full control over server, accepting connections, receiving and sending messages through ongoing sessions.
 3️⃣ Session classes: Client counterpart at servers side. accessed only by server classes to read and respond to clients through started sessions.
-![Alt Text](Photos/Screenshot (141).png)
-![Alt Text](Photos/Screenshot (142).png)
+![Alt Text](Photos/Screenshot(141).png)
+![Alt Text](Photos/Screenshot(142).png)
 **Server and Session classes hierarchy**
 
 🔹 Key Features & Functionality
@@ -29,13 +29,13 @@ I aimed for a modular and maintainable design using OOP and SOLID design princip
 🔀Threads Pool for Concurrent Handling: Each connection is handled by 2 threads at each side, client/server. For reading and writing ensuring smooth performance.
 🚦 Thread-Safety: Shared resources and critical sections are protected by mutexes. To ensure safe read/write operations and connection control across multiple threads.
 🔄 Resource Management: To prevent memory leakage using smart pointers. also some cases needed explicit release of memory for errors handling and cleanup.
-![Alt Text](Photos/Screenshot (143).png)
+![Alt Text](Photos/Screenshot(143).png)
 **client-server sequence diagram**
-![Alt Text](Photos/Screenshot (149).png)
+![Alt Text](Photos/Screenshot(149).png)
 **thread-safe read/write sequence diagram**
-![Alt Text](Photos/Screenshot (150).png)
+![Alt Text](Photos/Screenshot(150).png)
 **thread-safe server session establishment sequence diagram**
-![Alt Text](Photos/Screenshot (151).png)
+![Alt Text](Photos/Screenshot(151).png)
 **complete websocket secure sequence diagram**
 
 🔹 Testing & Validation
