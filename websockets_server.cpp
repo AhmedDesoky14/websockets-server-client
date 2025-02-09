@@ -488,6 +488,7 @@ void ws_session::start(void)
         std::this_thread::sleep_for(std::chrono::seconds(1));
     if(!ongoing_session.load())  //if connection is not successfull
     {
+        self_object->ongoing_session = true;
         self_object->stop();   //stop if not stopped
         return;
     }
@@ -739,6 +740,7 @@ void wss_session::start(void)
         std::this_thread::sleep_for(std::chrono::seconds(1));
     if(!ongoing_session.load())  //if connection is not successfull
     {
+        self_object->ongoing_session = true;
         self_object->stop();   //stop if not stopped
         return;
     }

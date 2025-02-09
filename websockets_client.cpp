@@ -364,6 +364,7 @@ bool ws_client::connect(std::string& ip_address, unsigned short port)
         std::this_thread::sleep_for(std::chrono::seconds(1));
     if(!ongoing_connection.load())  //if connection is not successfull
     {
+        self_object->ongoing_connection = true; //setting "ongoing_connection" by true, to be able to run disconnect
         self_object->disconnect(); //disconnect if not disconnected and reset
         return false;
     }
@@ -698,6 +699,7 @@ bool wss_client::connect(std::string& ip_address, unsigned short port)
         std::this_thread::sleep_for(std::chrono::seconds(1));
     if(!ongoing_connection.load())  //if connection is not successfull
     {
+        self_object->ongoing_connection = true; //setting "ongoing_connection" by true, to be able to run disconnect
         self_object->disconnect(); //disconnect if not disconnected and reset
         return false;
     }
