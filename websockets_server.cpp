@@ -119,7 +119,7 @@ void ws_server_base::start(void)
     tcp_acceptor.listen();
     this->accept_connection();
     threads_pool = std::make_unique<net::thread_pool>(max_sessions*2);
-    for (std::size_t i=0; i < max_sessions*2; ++i)  //here check after stopping and starting again
+    for (std::size_t i=0; i < max_sessions*2; ++i)
         net::post(*threads_pool, [this](){io_ctx->run();});
     return;
 }
